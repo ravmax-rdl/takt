@@ -25,14 +25,14 @@ pub fn run() {
     let _log_guard = logging::init(&paths.log_dir);
     let config = config::load(&paths.config_file);
     // Create and migrate the database before any read-only connection opens it.
-    if let Err(error) = takt_store::Store::open(&paths.db_file) {
+    // On failure the window still opens, showing the problem: a GUI launch has no terminal.
+    let startup_error = takt_store::Store::open(&paths.db_file).err().map(|error| {
         tracing::error!(%error, "cannot open the database");
-        eprintln!(
-            "takt cannot open its database at {}: {error}",
+        format!(
+            "Cannot open the database at {}: {error}",
             paths.db_file.display()
-        );
-        std::process::exit(1);
-    }
+        )
+    });
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
         keys::bind(cx);
@@ -41,7 +41,15 @@ pub fn run() {
             ..Default::default()
         };
         gpui_kit::open_window(options, cx, |window, cx| {
-            cx.new(|cx| ui::AppView::new(paths.clone(), config.clone(), window, cx))
+            cx.new(|cx| {
+                ui::AppView::new(
+                    paths.clone(),
+                    config.clone(),
+                    startup_error.clone(),
+                    window,
+                    cx,
+                )
+            })
         })
         .expect("cannot open the main window");
         cx.on_window_closed(|cx, _| {

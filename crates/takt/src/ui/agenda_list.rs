@@ -63,6 +63,18 @@ fn load_earlier_button(model: Entity<CalendarModel>) -> Button {
         .on_click(move |_, _, cx| model.update(cx, |m, cx| m.load_earlier(cx)))
 }
 
+fn load_later_button(model: Entity<CalendarModel>) -> Button {
+    Button::new("load-later")
+        .ghost()
+        .xsmall()
+        .label("Load later")
+        .on_click(move |_, _, cx| model.update(cx, |m, cx| m.load_later(cx)))
+}
+
+/// gpui-kit's list gives every footer the height it measures for section 0,
+/// so all footers share one fixed height; it doubles as the gap between days.
+const FOOTER_HEIGHT: f32 = 28.;
+
 impl ListDelegate for AgendaDelegate {
     type Item = ListItem;
 
@@ -86,7 +98,6 @@ impl ListDelegate for AgendaDelegate {
             h_flex()
                 .w_full()
                 .px_3()
-                .pt_3()
                 .pb_1()
                 .justify_between()
                 .text_sm()
@@ -94,6 +105,27 @@ impl ListDelegate for AgendaDelegate {
                 .text_color(cx.theme().muted_foreground)
                 .child(header)
                 .when(section == 0, |this| this.child(load_earlier_button(model))),
+        )
+    }
+
+    /// Only the last day shows "Load later": scrolling stops loading on its
+    /// own at a horizon or once a page brings no new day.
+    fn render_section_footer(
+        &mut self,
+        section: usize,
+        _: &mut Window,
+        _: &mut Context<ListState<Self>>,
+    ) -> Option<impl IntoElement> {
+        let last = section + 1 == self.sections.len();
+        Some(
+            h_flex()
+                .w_full()
+                .h(px(FOOTER_HEIGHT))
+                .px_3()
+                .justify_center()
+                .when(last, |this| {
+                    this.child(load_later_button(self.model.clone()))
+                }),
         )
     }
 
@@ -105,7 +137,6 @@ impl ListDelegate for AgendaDelegate {
         cx: &mut Context<ListState<Self>>,
     ) -> impl IntoElement {
         let model = self.model.clone();
-        let later = self.model.clone();
         v_flex()
             .size_full()
             .items_center()
@@ -115,13 +146,10 @@ impl ListDelegate for AgendaDelegate {
             .text_color(cx.theme().muted_foreground)
             .child("Nothing scheduled in this range.")
             .child(
-                h_flex().gap_2().child(load_earlier_button(model)).child(
-                    Button::new("load-later")
-                        .ghost()
-                        .xsmall()
-                        .label("Load later")
-                        .on_click(move |_, _, cx| later.update(cx, |m, cx| m.load_later(cx))),
-                ),
+                h_flex()
+                    .gap_2()
+                    .child(load_earlier_button(model.clone()))
+                    .child(load_later_button(model)),
             )
     }
 
@@ -149,12 +177,12 @@ impl ListDelegate for AgendaDelegate {
         cx.notify();
     }
 
-    fn has_more(&self, _: &App) -> bool {
-        true
+    fn has_more(&self, cx: &App) -> bool {
+        self.model.read(cx).can_auto_load_later()
     }
 
     fn load_more(&mut self, _: &mut Window, cx: &mut Context<ListState<Self>>) {
-        self.model.update(cx, |m, cx| m.load_later(cx));
+        self.model.update(cx, |m, cx| m.auto_load_later(cx));
     }
 }
 
