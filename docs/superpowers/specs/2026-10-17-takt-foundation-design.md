@@ -62,8 +62,8 @@ Threads:
 
 Channels between UI and sync (`async-channel`, so either executor can await them):
 
-- UI → sync: `AddAccount`, `RemoveAccount { account }`, `SyncNow`, `WindowFocus(bool)`. Sub-project 3 adds write commands.
-- sync → UI: `Changed { account, calendars, range }`, `Status { account, state }`, `AuthNeeded { account }`.
+- UI → sync (`Command`): `AddAccount`, `RemoveAccount { account_id }`, `SyncNow`, `WindowFocus(bool)`, `Shutdown`. Sub-project 3 adds write commands.
+- sync → UI (`SyncEvent`): `Changed { account_id, changes: ChangeSet }`, `Status { account_id, state }`, `AuthNeeded { account_id }`, `AccountsChanged` (an account was added or removed), `SignInFailed(message)`.
 
 Sync never sends event data to the UI; the UI re-queries the store. The store is the only source of truth for the UI, which is what lets a later outbox write locally first without UI changes.
 
@@ -205,7 +205,7 @@ First sync of a new account runs in this order: calendar list, colours, settings
 
 ### Change notification
 
-After each committed page, send `Changed { account, calendars, range }`, where `range` covers the times touched by the changed rows. For a master the range runs from its first occurrence to `series_end_utc` (or unbounded).
+After each committed page, send `Changed { account_id, changes }`. The `ChangeSet` names the changed calendars and task lists and carries `span`, the union of the times touched by the changed rows; for a master that runs from its first occurrence to `series_end_utc` (or unbounded). A change whose times are unknown, such as a calendar's colour or a removed calendar, sets `everything` so the UI re-reads every range.
 
 ### Recovery
 
@@ -213,7 +213,11 @@ After each committed page, send `Changed { account, calendars, range }`, where `
 |---|---|
 | `410 Gone` on `events.list` | Delete that calendar's events, clear its token, full re-sync of the calendar |
 | `410 Gone` on `calendarList.list` | Clear the account's calendar-list token and all calendar tokens; full re-sync of the account |
-| `404` or `403` (not rate limit) on a calendar's events | Remove the calendar and its events |
+| `404` or `403` on a calendar's events | Remove the calendar and its events, except for the 403 reasons below |
+| `403` with a quota reason (`TEMPORARY_FORBIDDEN`: `dailyLimitExceeded`, `quotaExceeded`) | Keep the calendar; the round reports the error and the next round tries again. Rate-limit reasons are retried by the client (§2) |
+| `403` with an app or grant reason (`ACCOUNT_FORBIDDEN`: `accessNotConfigured`, `insufficientPermissions`, `SERVICE_DISABLED`, `ACCESS_TOKEN_SCOPE_INSUFFICIENT`) | Keep the calendar: every calendar would fail the same way. The round reports the error |
+| `403` on `calendarList.list` | Account-wide: skip the events step for that round, keep the stored calendars, report the error |
+| `403` on the task lists (not a quota reason) | The Tasks API is unavailable: skip tasks for that round without an error |
 | Connection failure | Status `Offline(since)`; retry with backoff capped at 5 min; `SyncNow` retries immediately |
 | `invalid_grant` | Status `NeedsReauth`; stop the loop |
 | Task panic | Restart the task with backoff; status `Error(msg)` |
@@ -302,7 +306,11 @@ A `CalendarModel` entity holds the loaded range and query results. On a `Changed
 
 ### Fixture capture
 
-`cargo run -p takt-google --example capture -- --calendar takt-fixtures` reads a dedicated `takt-fixtures` calendar in the owner's account. For each recurring series it saves the master, its exceptions, and Google's `events.instances` output for a fixed range as JSON under `crates/takt-recur/tests/fixtures/`, with attendee emails replaced. Fixtures are committed. Tests never call the live API.
+```
+cargo run -p takt-google --example capture -- --config "<path to config.toml>" --email "<your email>" --calendar takt-fixtures --from 2026-01-01 --to 2028-01-01 --out crates/takt-recur/tests/fixtures
+```
+
+It signs in with the OAuth client from `--config` and the refresh token takt stored in the keychain for `--email` (sign in with takt first), then reads the dedicated calendar named by `--calendar` in that account. For each recurring series it saves the master, its exceptions, and Google's `events.instances` output for the range `--from`..`--to` as JSON under `--out`. Only an allowlist of event fields is kept, and values under `email` keys are replaced with placeholders. Fixtures are committed. Tests never call the live API.
 
 Series to create in that calendar through the web UI:
 

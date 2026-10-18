@@ -164,8 +164,8 @@ const ALLOWED: &[&str] = &[
     "kind",
 ];
 
-/// Keeps only allowlisted keys on every event; as a safety net, replaces any
-/// email address left anywhere with a stable placeholder.
+/// Keeps only allowlisted keys on every event; as a safety net, replaces every
+/// value under an `email` key, at any depth, with a stable placeholder.
 #[derive(Default)]
 struct Scrubber {
     emails: HashMap<String, String>,

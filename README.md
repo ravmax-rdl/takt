@@ -74,7 +74,7 @@ To capture fixtures, sign in with takt, create series in a calendar named `takt-
 cargo run -p takt-google --example capture -- --config "<path to config.toml>" --email "<your email>" --calendar takt-fixtures --from 2026-01-01 --to 2028-01-01 --out crates/takt-recur/tests/fixtures
 ```
 
-The capture keeps only an allowlist of event fields (`id`, `status`, `summary`, `start`, `end`, `recurrence`, `recurringEventId`, `originalStartTime`, `iCalUID`, `eventType`, `kind`) and replaces any email address left with a placeholder, so attendees, descriptions and locations never land in the repository. Still, review the files before committing them.
+The capture keeps only an allowlist of event fields (`id`, `status`, `summary`, `start`, `end`, `recurrence`, `recurringEventId`, `originalStartTime`, `iCalUID`, `eventType`, `kind`) and drops every other field, so attendees, descriptions and locations never land in the repository. As a safety net, any value left under an `email` key (such as `creator.email` or `organizer.email`, if they were ever allowlisted) is replaced with a placeholder; email addresses elsewhere, for example inside a kept `summary`, are not. Still, review the files before committing them.
 
 ## Known limits
 
