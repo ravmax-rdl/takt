@@ -109,7 +109,7 @@ pub fn expand(
     let (set, start) = parse_set(master, all_day)?;
     let after = to_rrule_tz(range.start - duration - start.lead() - TimeDelta::seconds(1));
     let before = to_rrule_tz(range.end);
-    let mut out: Vec<Occurrence> = set
+    let mut originals: Vec<When> = set
         .after(after)
         .before(before)
         .all(MAX_OCCURRENCES)
@@ -117,6 +117,12 @@ pub fn expand(
         .into_iter()
         .filter_map(|dt| start.actual(dt))
         .map(|t| original_of(t, all_day))
+        .collect();
+    // An RDATE can repeat a generated date; each instance ID appears once.
+    originals.sort();
+    originals.dedup();
+    let mut out: Vec<Occurrence> = originals
+        .into_iter()
         // Any exception, cancelled or moved, replaces the generated occurrence.
         .filter(|original| !exceptions.iter().any(|e| e.original_start == *original))
         .map(|original| Occurrence {
@@ -214,7 +220,7 @@ impl Start {
 }
 
 fn parse_set(master: &Master, all_day: bool) -> Result<(rrule::RRuleSet, Start), RecurError> {
-    let rule_start = normalize::rule_start(master);
+    let rule_start = normalize::rule_start(master)?;
     let set = rrule::RRuleSet::new(rule_start)
         .set_from_string(&normalize::recurrence_text(master, all_day))
         .map_err(|e| RecurError::Parse(e.to_string()))?;

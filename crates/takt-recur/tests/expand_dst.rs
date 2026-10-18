@@ -4,7 +4,8 @@
 mod common;
 
 use common::*;
-use takt_recur::{Exception, Master, expand, series_end};
+use takt_recur::When;
+use takt_recur::{Exception, Master, RecurError, expand, series_end};
 
 fn berlin(start: &str, end: &str, rules: &[&str]) -> Master {
     Master {
@@ -100,7 +101,7 @@ fn exception_on_second_of_repeated_hours_replaces_master() {
         "2018-10-28T01:30:00Z",
         &["RRULE:FREQ=DAILY;COUNT=2"],
     );
-    let moved = Exception {
+    let cancelled = Exception {
         id: "dst_20181028T010000Z".into(),
         original_start: at("2018-10-28T01:00:00Z"),
         cancelled: true,
@@ -108,7 +109,12 @@ fn exception_on_second_of_repeated_hours_replaces_master() {
         end: at("2018-10-28T01:30:00Z"),
     };
     assert_eq!(
-        starts(&m, &[moved], "2018-10-27T00:00:00Z", "2018-11-01T00:00:00Z"),
+        starts(
+            &m,
+            &[cancelled],
+            "2018-10-27T00:00:00Z",
+            "2018-11-01T00:00:00Z"
+        ),
         ["2018-10-29T01:00:00+00:00"]
     );
 }
@@ -202,4 +208,49 @@ fn floating_until_in_repeated_hour_includes_first_offset() {
         &["RRULE:FREQ=DAILY;UNTIL=20181028T023000"],
     );
     assert_eq!(series_end(&m).unwrap(), Some(at("2018-10-28T01:00:00Z")));
+}
+
+#[test]
+fn ambiguous_start_on_day_without_valid_midnight_is_an_error() {
+    use chrono::{LocalResult, NaiveDate, TimeZone};
+    use chrono_tz::America::Havana;
+    // Havana falls back at 01:00 on 2018-11-04, so all of 00:00-00:59 repeats.
+    let local = NaiveDate::from_ymd_opt(2018, 11, 4)
+        .unwrap()
+        .and_hms_opt(0, 30, 0)
+        .unwrap();
+    let LocalResult::Ambiguous(first, _) = Havana.from_local_datetime(&local) else {
+        panic!("00:30 should be ambiguous in Havana");
+    };
+    let start = first.with_timezone(&chrono::Utc);
+    let m = Master {
+        id: "hav".into(),
+        start: When::At(start),
+        end: When::At(start + chrono::TimeDelta::minutes(30)),
+        tz: Havana,
+        recurrence: vec!["RRULE:FREQ=DAILY;COUNT=3".into()],
+    };
+    let got = expand(
+        &m,
+        &[],
+        &range("2018-11-01T00:00:00Z", "2018-11-10T00:00:00Z"),
+    );
+    assert!(matches!(got, Err(RecurError::Parse(_))), "{got:?}");
+}
+
+#[test]
+fn rdate_equal_to_generated_date_yields_one_occurrence() {
+    let m = berlin(
+        "2018-10-26T08:00:00Z",
+        "2018-10-26T09:00:00Z",
+        &["RRULE:FREQ=DAILY;COUNT=2", "RDATE:20181027T080000Z"],
+    );
+    let got = expand(
+        &m,
+        &[],
+        &range("2018-10-25T00:00:00Z", "2018-11-01T00:00:00Z"),
+    )
+    .unwrap();
+    let ids: Vec<_> = got.iter().map(|o| o.instance_id.as_str()).collect();
+    assert_eq!(ids, ["dst_20181026T080000Z", "dst_20181027T080000Z"]);
 }

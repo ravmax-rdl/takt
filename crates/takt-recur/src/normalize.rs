@@ -3,17 +3,24 @@
 use chrono::{DateTime, LocalResult, NaiveDate, NaiveDateTime, Offset, TimeDelta, TimeZone, Utc};
 use chrono_tz::Tz;
 
-use crate::{Master, When};
+use crate::{Master, RecurError, When};
 
 /// The series' recurrence lines with UNTIL, EXDATE and RDATE values made
-/// explicit. The start goes to `rrule` separately (see [`rule_start`]).
+/// explicit. The start goes to `rrule` separately (see [`rule_start`]), so
+/// any DTSTART or DTEND line is dropped rather than allowed to override it.
 pub(crate) fn recurrence_text(master: &Master, all_day: bool) -> String {
     master
         .recurrence
         .iter()
+        .filter(|line| !is_start_or_end(line))
         .map(|line| normalize_line(line.trim(), all_day, master.tz))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn is_start_or_end(line: &str) -> bool {
+    let name = line.trim().split([':', ';']).next().unwrap_or_default();
+    name.eq_ignore_ascii_case("DTSTART") || name.eq_ignore_ascii_case("DTEND")
 }
 
 /// The instant `rrule` starts the series from.
@@ -24,12 +31,28 @@ pub(crate) fn recurrence_text(master: &Master, all_day: bool) -> String {
 /// fall-back is given to `rrule` as the earlier instant, which `rrule`
 /// generates (and counts) as the first occurrence. The caller maps that one
 /// occurrence back to the master's real start.
-pub(crate) fn rule_start(master: &Master) -> DateTime<rrule::Tz> {
-    match master.start {
+///
+/// `rrule` also drops every day whose local midnight is not a single valid
+/// time. If such a day holds an ambiguous start, the first occurrence would be
+/// lost silently, so that combination is an error.
+pub(crate) fn rule_start(master: &Master) -> Result<DateTime<rrule::Tz>, RecurError> {
+    Ok(match master.start {
         When::At(t) => {
             let local = t.with_timezone(&master.tz).naive_local();
             let start = match master.tz.from_local_datetime(&local) {
-                LocalResult::Ambiguous(earlier, _) => earlier.with_timezone(&Utc),
+                LocalResult::Ambiguous(earlier, _) => {
+                    let midnight = local.date().and_time(chrono::NaiveTime::MIN);
+                    if !matches!(
+                        master.tz.from_local_datetime(&midnight),
+                        LocalResult::Single(_)
+                    ) {
+                        return Err(RecurError::Parse(format!(
+                            "series start {local} is ambiguous in {} and local midnight that day is not a valid single time",
+                            master.tz
+                        )));
+                    }
+                    earlier.with_timezone(&Utc)
+                }
                 _ => t,
             };
             start.with_timezone(&rrule::Tz::Tz(master.tz))
@@ -40,7 +63,7 @@ pub(crate) fn rule_start(master: &Master) -> DateTime<rrule::Tz> {
             .expect("midnight exists")
             .and_utc()
             .with_timezone(&rrule::Tz::UTC),
-    }
+    })
 }
 
 fn normalize_line(line: &str, all_day: bool, tz: Tz) -> String {
@@ -221,6 +244,22 @@ mod tests {
             ),
             "RRULE:FREQ=DAILY;UNTIL=20190331T013000Z"
         );
+    }
+
+    #[test]
+    fn dtstart_and_dtend_lines_are_dropped() {
+        let master = Master {
+            id: "m".into(),
+            start: When::Date(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap()),
+            end: When::Date(NaiveDate::from_ymd_opt(2026, 1, 2).unwrap()),
+            tz: Tz::UTC,
+            recurrence: vec![
+                "dtstart;TZID=UTC:20300101T000000".into(),
+                " DTEND:20300102T000000Z".into(),
+                "RRULE:FREQ=DAILY".into(),
+            ],
+        };
+        assert_eq!(recurrence_text(&master, true), "RRULE:FREQ=DAILY");
     }
 
     #[test]
