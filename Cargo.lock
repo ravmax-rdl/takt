@@ -2345,6 +2345,20 @@ dependencies = [
 [[package]]
 name = "takt-sync"
 version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "chrono",
+ "futures",
+ "reqwest",
+ "serde_json",
+ "takt-google",
+ "takt-store",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "wiremock",
+]
 
 [[package]]
 name = "tempfile"
