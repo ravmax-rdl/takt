@@ -2549,7 +2549,7 @@ async fn settings_collects_all_pages() {
         .respond_with(ok(json!({"items": [{"id": "format24HourTime", "value": "true"}]})))
         .mount(&server).await;
     let settings = client_at(&server).settings().await.unwrap();
-    let ids: Vec<_> = settings.iter().map(|s| s.id.as_str()).collect();
+    let ids: Vec<_> = settings.iter().map(|s| s.fields.id.as_str()).collect();
     assert_eq!(ids, ["timezone", "format24HourTime"]);
 }
 
@@ -2560,7 +2560,7 @@ async fn colors_reads_palette() {
         .respond_with(ok(json!({"event": {"11": {"background": "#dc2127", "foreground": "#1d1d1d"}}})))
         .mount(&server).await;
     let colors = client_at(&server).colors().await.unwrap();
-    assert_eq!(colors.event["11"].background, "#dc2127");
+    assert_eq!(colors.fields.event["11"].background, "#dc2127");
 }
 
 #[tokio::test]
@@ -2641,12 +2641,12 @@ impl GoogleClient {
         Page::from_value(self.get_json(url).await?)
     }
 
-    pub async fn colors(&self) -> Result<Colors, GoogleError> {
+    pub async fn colors(&self) -> Result<Item<Colors>, GoogleError> {
         let url = join(&self.endpoints.calendar, &["colors"])?;
-        serde_json::from_value(self.get_json(url).await?).map_err(|e| GoogleError::Decode(e.to_string()))
+        Item::from_value(self.get_json(url).await?)
     }
 
-    pub async fn settings(&self) -> Result<Vec<Setting>, GoogleError> {
+    pub async fn settings(&self) -> Result<Vec<Item<Setting>>, GoogleError> {
         let mut settings = Vec::new();
         let mut page_token: Option<String> = None;
         loop {
@@ -2654,7 +2654,7 @@ impl GoogleClient {
             url.query_pairs_mut().append_pair("maxResults", "250");
             push_tokens(&mut url, None, page_token.as_deref());
             let page: Page<Setting> = Page::from_value(self.get_json(url).await?)?;
-            settings.extend(page.items.into_iter().map(|item| item.fields));
+            settings.extend(page.items);
             match page.next_page_token {
                 Some(next) => page_token = Some(next),
                 None => return Ok(settings),
@@ -2753,7 +2753,7 @@ git commit -m "feat(takt-google): add calendar list, events, colours, settings a
   - `ChangeSet { calendars: BTreeSet<String>, task_lists: BTreeSet<String>, span: Option<TimeSpan>, everything: bool }` with `is_empty()`, `affects(start, end)`, `merge(other)`
   - `ColorPalette { calendar, event: BTreeMap<String, (String, String)> }` (id → (background, foreground))
   - `day_start_utc(NaiveDate, Tz) -> DateTime<Utc>`, `local_days(from, to, Tz) -> Range`, `display_instant(&When, Tz) -> DateTime<Utc>`
-  - Methods: `upsert_account(&mut self, account_id, email)`, `accounts()`, `set_account_status(account_id, AccountStatus)`, `remove_account(account_id)`, `calendar_list_sync_token(account_id)`, `apply_calendar_list_page(account_id, &[Item<CalendarListEntry>], next_sync_token: Option<&str>) -> Result<ChangeSet>`, `calendars(account_id: Option<&str>)`, `remove_calendar(account_id, calendar_id)`, `reset_account_sync(account_id)`, `put_settings(account_id, &[Setting])`, `settings(account_id) -> BTreeMap<String, String>`, `put_colors(account_id, &Colors)`, `palette(account_id) -> ColorPalette`
+  - Methods: `upsert_account(&mut self, account_id, email)`, `accounts()`, `set_account_status(account_id, AccountStatus)`, `remove_account(account_id)`, `calendar_list_sync_token(account_id)`, `apply_calendar_list_page(account_id, &[Item<CalendarListEntry>], next_sync_token: Option<&str>) -> Result<ChangeSet>`, `calendars(account_id: Option<&str>)`, `remove_calendar(account_id, calendar_id)`, `reset_account_sync(account_id)`, `put_settings(account_id, &[Item<Setting>])`, `settings(account_id) -> BTreeMap<String, String>`, `put_colors(account_id, &Item<Colors>)`, `palette(account_id) -> ColorPalette`
   - Re-exports `takt_recur::{Range, When}`.
 
 - [ ] **Step 1: Add dependencies**
@@ -4424,7 +4424,7 @@ git commit -m "feat(takt-store): query visible occurrences with local expansion"
 - Produces:
   - `Store::apply_task_lists(&mut self, account_id, &[Item<TaskListFields>]) -> Result<ChangeSet>` (full list: lists missing from it are deleted with their tasks)
   - `Store::task_checkpoint(&self, account_id, list_id) -> Result<Option<DateTime<Utc>>>`
-  - `Store::apply_tasks_page(&mut self, account_id, list_id, &[Item<TaskFields>]) -> Result<ChangeSet>` (advances the checkpoint to the largest `updated` seen, never backwards)
+  - `Store::apply_tasks_page(&mut self, account_id, list_id, &[Item<TaskFields>], checkpoint: Option<DateTime<Utc>>) -> Result<ChangeSet>` (`checkpoint` is the newest `updated` seen across all pages, passed only with the last page; the stored checkpoint never goes backwards)
   - `Store::tasks_due(&self, from: NaiveDate, to: NaiveDate) -> Result<Vec<TaskItem>>` (`[from, to)`, hidden tasks excluded, ordered by date then title)
 
 - [ ] **Step 1: Write the failing tests**

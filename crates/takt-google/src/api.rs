@@ -40,13 +40,12 @@ impl GoogleClient {
         Page::from_value(self.get_json(url).await?)
     }
 
-    pub async fn colors(&self) -> Result<Colors, GoogleError> {
+    pub async fn colors(&self) -> Result<Item<Colors>, GoogleError> {
         let url = join(&self.endpoints.calendar, &["colors"])?;
-        serde_json::from_value(self.get_json(url).await?)
-            .map_err(|e| GoogleError::Decode(e.to_string()))
+        Item::from_value(self.get_json(url).await?)
     }
 
-    pub async fn settings(&self) -> Result<Vec<Setting>, GoogleError> {
+    pub async fn settings(&self) -> Result<Vec<Item<Setting>>, GoogleError> {
         let mut settings = Vec::new();
         let mut page_token: Option<String> = None;
         loop {
@@ -54,7 +53,7 @@ impl GoogleClient {
             url.query_pairs_mut().append_pair("maxResults", "250");
             push_tokens(&mut url, None, page_token.as_deref());
             let page: Page<Setting> = Page::from_value(self.get_json(url).await?)?;
-            settings.extend(page.items.into_iter().map(|item| item.fields));
+            settings.extend(page.items);
             match page.next_page_token {
                 Some(next) => page_token = Some(next),
                 None => return Ok(settings),

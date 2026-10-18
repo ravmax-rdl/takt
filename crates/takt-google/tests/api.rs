@@ -140,8 +140,12 @@ async fn settings_collects_all_pages() {
         .mount(&server)
         .await;
     let settings = client_at(&server).settings().await.unwrap();
-    let ids: Vec<_> = settings.iter().map(|s| s.id.as_str()).collect();
+    let ids: Vec<_> = settings.iter().map(|s| s.fields.id.as_str()).collect();
     assert_eq!(ids, ["timezone", "format24HourTime"]);
+    assert_eq!(
+        settings[0].raw,
+        json!({"id": "timezone", "value": "Europe/London"})
+    );
 }
 
 #[tokio::test]
@@ -155,7 +159,11 @@ async fn colors_reads_palette() {
         .mount(&server)
         .await;
     let colors = client_at(&server).colors().await.unwrap();
-    assert_eq!(colors.event["11"].background, "#dc2127");
+    assert_eq!(colors.fields.event["11"].background, "#dc2127");
+    assert_eq!(
+        colors.raw,
+        json!({"event": {"11": {"background": "#dc2127", "foreground": "#1d1d1d"}}})
+    );
 }
 
 #[tokio::test]
