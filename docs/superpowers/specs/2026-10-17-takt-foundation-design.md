@@ -171,8 +171,8 @@ Each `Occurrence` carries `account_id` and `calendar_id`. Rows from different ac
 
 `expand(master, exceptions, range) -> Vec<Occurrence>`, a pure function:
 
-1. Build `DTSTART;TZID=<master.start.timeZone>:<local start>` (or `DTSTART;VALUE=DATE:<date>` for all-day) and prepend it to the master's `recurrence` lines.
-2. Parse with `rrule` and iterate from `range.start - duration` to `range.end`.
+1. Pass the master's start straight to `RRuleSet` as its DTSTART (UTC midnight for all-day) and parse the master's `recurrence` lines into it, after dropping any DTSTART/DTEND lines and making UNTIL, EXDATE and RDATE values explicit UTC. For a start in the repeated hour of a DST fall-back, `rrule` is given the earlier instant instead and that one occurrence is mapped back to the master's real instant. If local midnight that day is also not a single valid time, `rrule` would drop the first occurrence, so `expand` returns a parse error.
+2. Iterate from `range.start - duration - (real start - earlier instant)` to `range.end`, and sort and dedupe the generated dates (an RDATE can repeat one).
 3. Assign Google's instance ID to each occurrence: `<masterId>_<YYYYMMDDTHHMMSSZ>` (UTC) for timed events, `<masterId>_<YYYYMMDD>` for all-day.
 4. Match exceptions by original start. Cancelled: drop the occurrence. Modified: emit the exception's fields instead.
 5. Stop after 10,000 occurrences per series per call.
