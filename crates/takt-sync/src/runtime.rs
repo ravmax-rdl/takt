@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -78,6 +78,8 @@ pub fn start(config: SyncConfig) -> std::io::Result<SyncHandle> {
                 .build()
                 .expect("cannot build the sync runtime");
             runtime.block_on(run(config, command_rx, event_tx));
+            // Account loops are aborted by then; do not wait long for blocking work.
+            runtime.shutdown_timeout(Duration::from_secs(2));
         })?;
     Ok(SyncHandle {
         commands: command_tx,
@@ -102,6 +104,12 @@ struct Shared {
 }
 
 impl Shared {
+    /// The store, even if a thread panicked while holding it: each write is
+    /// one transaction, so a panic cannot leave it half-applied.
+    fn store(&self) -> MutexGuard<'_, Store> {
+        self.store.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     fn send(&self, event: SyncEvent) {
         let _ = self.events.try_send(event);
     }
@@ -123,9 +131,7 @@ impl Shared {
 
     fn mark_needs_reauth(&self, account_id: &str) {
         if let Err(error) = self
-            .store
-            .lock()
-            .expect("store mutex poisoned")
+            .store()
             .set_account_status(account_id, AccountStatus::NeedsReauth)
         {
             tracing::error!(%error, "cannot record re-auth status");
@@ -173,12 +179,7 @@ async fn run(
     let (sign_in_tx, mut sign_ins) = mpsc::unbounded_channel::<Result<SignedIn, GoogleError>>();
     let mut loops: HashMap<String, AbortOnDrop<()>> = HashMap::new();
 
-    let accounts = shared
-        .store
-        .lock()
-        .expect("store mutex poisoned")
-        .accounts()
-        .unwrap_or_default();
+    let accounts = shared.store().accounts().unwrap_or_default();
     for account in accounts {
         match account.status {
             AccountStatus::Ok => {
@@ -242,12 +243,7 @@ fn finish_sign_in(shared: &Arc<Shared>, signed: SignedIn) -> Option<(String, Abo
         )));
         return None;
     }
-    if let Err(error) = shared
-        .store
-        .lock()
-        .expect("store mutex poisoned")
-        .upsert_account(&signed.sub, &signed.email)
-    {
+    if let Err(error) = shared.store().upsert_account(&signed.sub, &signed.email) {
         shared.send(SyncEvent::SignInFailed(format!(
             "cannot save the account: {error}"
         )));
@@ -260,7 +256,7 @@ fn finish_sign_in(shared: &Arc<Shared>, signed: SignedIn) -> Option<(String, Abo
 }
 
 fn remove_account(shared: &Arc<Shared>, account_id: &str) {
-    let mut store = shared.store.lock().expect("store mutex poisoned");
+    let mut store = shared.store();
     let email = store
         .accounts()
         .unwrap_or_default()
@@ -320,11 +316,28 @@ async fn account_loop(
     email: String,
     seed: Option<(String, Duration)>,
 ) {
-    let refresh_token = match shared.tokens.get(&email) {
-        Ok(Some(token)) => token,
-        Ok(None) => return shared.mark_needs_reauth(&account_id),
-        Err(error) => return shared.status(&account_id, SyncState::Error(error.to_string())),
+    // A loop starts with the wake-ups sent before it marked as seen, so it
+    // runs one round now, not an extra one straight after.
+    let mut wake = shared.wake.clone();
+    wake.borrow_and_update();
+    let mut offline_delay = OFFLINE_FIRST_RETRY;
+    let refresh_token = loop {
+        match shared.tokens.get(&email) {
+            Ok(Some(token)) => break token,
+            Ok(None) => return shared.mark_needs_reauth(&account_id),
+            Err(error) => {
+                // A locked or busy keychain may answer later; retry like offline.
+                tracing::warn!(account = %account_id, %error, "cannot read the refresh token");
+                shared.status(&account_id, SyncState::Error(error.to_string()));
+                let wait = offline_delay;
+                offline_delay = (offline_delay * 2).min(shared.intervals.offline_max);
+                if !sleep_or_wake(wait, &mut wake).await {
+                    return;
+                }
+            }
+        }
     };
+    offline_delay = OFFLINE_FIRST_RETRY;
     let mut auth = Auth::new(
         shared.http.clone(),
         shared.endpoints.token.clone(),
@@ -342,9 +355,7 @@ async fn account_loop(
         shared.store.clone(),
         shared.events.clone(),
     );
-    let mut wake = shared.wake.clone();
     let mut offline_since: Option<DateTime<Utc>> = None;
-    let mut offline_delay = OFFLINE_FIRST_RETRY;
     loop {
         let with_meta = engine.meta_due(shared.intervals.meta);
         shared.status(&account_id, SyncState::Syncing);
@@ -364,19 +375,24 @@ async fn account_loop(
                 wait
             }
             Err(error) => {
+                offline_since = None;
+                offline_delay = OFFLINE_FIRST_RETRY;
                 tracing::warn!(account = %account_id, %error, "sync round failed");
                 shared.status(&account_id, SyncState::Error(error.to_string()));
                 shared.poll_interval()
             }
         };
-        tokio::select! {
-            _ = tokio::time::sleep(wait) => {}
-            changed = wake.changed() => {
-                if changed.is_err() {
-                    return;
-                }
-            }
+        if !sleep_or_wake(wait, &mut wake).await {
+            return;
         }
+    }
+}
+
+/// Waits for `wait` or a wake-up. False when the runtime is shutting down.
+async fn sleep_or_wake(wait: Duration, wake: &mut watch::Receiver<u64>) -> bool {
+    tokio::select! {
+        _ = tokio::time::sleep(wait) => true,
+        changed = wake.changed() => changed.is_ok(),
     }
 }
 
@@ -390,20 +406,26 @@ impl<T> Drop for AbortOnDrop<T> {
 }
 
 /// Runs `make()` as a task and starts it again, with backoff, whenever it
-/// panics. Returns when a run finishes normally.
+/// panics. A run that lasted longer than `max_backoff` starts the backoff
+/// again from the beginning. Returns when a run finishes normally.
 pub(crate) async fn supervise<F, Fut>(mut make: F, on_panic: impl Fn(), max_backoff: Duration)
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = ()> + Send + 'static,
 {
-    let mut delay = Duration::from_secs(1).min(max_backoff);
+    let first_delay = Duration::from_secs(1).min(max_backoff);
+    let mut delay = first_delay;
     loop {
+        let started = tokio::time::Instant::now();
         let mut task = AbortOnDrop(tokio::spawn(make()));
         let outcome: Result<(), JoinError> = (&mut task.0).await;
         match outcome {
             Ok(()) => return,
             Err(error) if error.is_panic() => {
                 on_panic();
+                if started.elapsed() > max_backoff {
+                    delay = first_delay;
+                }
                 tokio::time::sleep(delay).await;
                 delay = (delay * 2).min(max_backoff);
             }
@@ -444,6 +466,38 @@ mod tests {
         supervise(make, on_panic, Duration::from_millis(1)).await;
         assert_eq!(runs.load(SeqCst), 2);
         assert_eq!(panics.load(SeqCst), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn long_run_resets_the_restart_delay() {
+        let starts = Arc::new(Mutex::new(Vec::new()));
+        let make = {
+            let starts = starts.clone();
+            move || {
+                let starts = starts.clone();
+                async move {
+                    let run = {
+                        let mut starts = starts.lock().unwrap();
+                        starts.push(tokio::time::Instant::now());
+                        starts.len()
+                    };
+                    match run {
+                        1 => panic!("fails at once"),
+                        2 => {
+                            tokio::time::sleep(Duration::from_secs(10)).await;
+                            panic!("fails after a long run");
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        };
+        supervise(make, || {}, Duration::from_secs(4)).await;
+        let starts = starts.lock().unwrap();
+        assert_eq!(starts.len(), 3);
+        assert_eq!(starts[1] - starts[0], Duration::from_secs(1));
+        // Without the reset this wait would be the doubled 2 s.
+        assert_eq!(starts[2] - starts[1], Duration::from_secs(11));
     }
 
     #[tokio::test]

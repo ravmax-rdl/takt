@@ -439,3 +439,124 @@ async fn interrupted_task_paging_resumes_from_the_old_checkpoint() {
         )
     );
 }
+
+fn forbidden(reason: &str) -> ResponseTemplate {
+    ResponseTemplate::new(403).set_body_json(json!({"error": {"errors": [{"reason": reason}]}}))
+}
+
+fn seed_calendar(f: &Fake) {
+    let cal = takt_google::model::Item::from_value(
+        json!({"id": "cal", "summary": "Me", "selected": true, "timeZone": "UTC"}),
+    )
+    .unwrap();
+    f.store
+        .lock()
+        .unwrap()
+        .apply_calendar_list_page("acc", &[cal], Some("cl0"))
+        .unwrap();
+}
+
+#[tokio::test]
+async fn forbidden_calendar_list_keeps_calendars_and_skips_events() {
+    let f = fake().await;
+    seed_calendar(&f);
+    mount_one_task(&f.server).await;
+    Mock::given(method("GET"))
+        .and(path("/calendar/v3/users/me/calendarList"))
+        .respond_with(forbidden("insufficientPermissions"))
+        .mount(&f.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(EVENTS))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&f.server)
+        .await;
+    let err = f.engine.round(false).await.unwrap_err();
+    assert!(!err.is_offline() && !err.needs_reauth(), "{err}");
+    assert_eq!(
+        f.store
+            .lock()
+            .unwrap()
+            .calendars(Some("acc"))
+            .unwrap()
+            .len(),
+        1
+    );
+    let event_calls = f
+        .server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path() == EVENTS)
+        .count();
+    assert_eq!(event_calls, 0, "the events step is skipped");
+    assert_eq!(tasks_due(&f), 1, "tasks still sync");
+}
+
+#[tokio::test]
+async fn account_wide_403_on_events_keeps_the_calendar() {
+    for reason in [
+        "accessNotConfigured",
+        "insufficientPermissions",
+        "SERVICE_DISABLED",
+        "ACCESS_TOKEN_SCOPE_INSUFFICIENT",
+    ] {
+        let f = fake().await;
+        mount_calendar_list(&f.server).await;
+        mount_no_tasks(&f.server).await;
+        Mock::given(method("GET"))
+            .and(path(EVENTS))
+            .respond_with(forbidden(reason))
+            .mount(&f.server)
+            .await;
+        assert!(f.engine.round(false).await.is_err(), "{reason}");
+        let store = f.store.lock().unwrap();
+        assert_eq!(store.calendars(Some("acc")).unwrap().len(), 1, "{reason}");
+        assert_eq!(
+            store.calendar_list_sync_token("acc").unwrap().as_deref(),
+            Some("cl1"),
+            "{reason}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn failing_task_list_does_not_stop_the_others() {
+    let f = fake().await;
+    mount_calendar_list(&f.server).await;
+    Mock::given(method("GET"))
+        .and(path(EVENTS))
+        .respond_with(ok(json!({"items": [], "nextSyncToken": "s1"})))
+        .mount(&f.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/tasks/v1/users/@me/lists"))
+        .respond_with(ok(json!({"items": [
+            {"id": "L1", "title": "Broken"},
+            {"id": "L2", "title": "My Tasks"}
+        ]})))
+        .mount(&f.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/tasks/v1/lists/L1/tasks"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&f.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/tasks/v1/lists/L2/tasks"))
+        .respond_with(ok(json!({"items": [
+            {"id": "t1", "title": "Pay rent", "due": "2026-10-20T00:00:00.000Z", "updated": "2026-10-17T10:00:00.000Z"}
+        ]})))
+        .mount(&f.server)
+        .await;
+    let err = f.engine.round(false).await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            takt_sync::SyncError::Google(takt_google::GoogleError::Http { status: 500, .. })
+        ),
+        "{err}"
+    );
+    assert_eq!(tasks_due(&f), 1);
+}

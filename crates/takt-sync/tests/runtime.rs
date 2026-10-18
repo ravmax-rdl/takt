@@ -2,12 +2,13 @@ mod common;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 use std::time::Duration;
 
 use base64::Engine;
 use common::*;
 use serde_json::json;
-use takt_google::{Endpoints, MemoryTokenStore, RetryPolicy, TokenStore, Url};
+use takt_google::{Endpoints, GoogleError, MemoryTokenStore, RetryPolicy, TokenStore, Url};
 use takt_store::{AccountStatus, Store};
 use takt_sync::*;
 use wiremock::matchers::{body_string_contains, method, path};
@@ -17,6 +18,35 @@ struct Rig {
     server: MockServer,
     dir: tempfile::TempDir,
     tokens: Arc<MemoryTokenStore>,
+    /// How many of the next keychain reads fail.
+    failing_reads: Arc<AtomicUsize>,
+}
+
+/// A keychain that can be made to fail reads, like a locked one.
+struct FlakyTokens {
+    inner: Arc<MemoryTokenStore>,
+    failing_reads: Arc<AtomicUsize>,
+}
+
+impl TokenStore for FlakyTokens {
+    fn get(&self, email: &str) -> Result<Option<String>, GoogleError> {
+        let failing = self
+            .failing_reads
+            .fetch_update(SeqCst, SeqCst, |n| n.checked_sub(1))
+            .is_ok();
+        if failing {
+            return Err(GoogleError::TokenStore("keychain locked".into()));
+        }
+        self.inner.get(email)
+    }
+
+    fn set(&self, email: &str, refresh_token: &str) -> Result<(), GoogleError> {
+        self.inner.set(email, refresh_token)
+    }
+
+    fn delete(&self, email: &str) -> Result<(), GoogleError> {
+        self.inner.delete(email)
+    }
 }
 
 impl Rig {
@@ -25,6 +55,7 @@ impl Rig {
             server: MockServer::start().await,
             dir: tempfile::tempdir().unwrap(),
             tokens: Arc::new(MemoryTokenStore::default()),
+            failing_reads: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -45,7 +76,10 @@ impl Rig {
             db_path: self.db(),
             endpoints: Endpoints::rooted_at(&self.server.uri()),
             oauth: oauth(),
-            tokens: self.tokens.clone(),
+            tokens: Arc::new(FlakyTokens {
+                inner: self.tokens.clone(),
+                failing_reads: self.failing_reads.clone(),
+            }),
             open_browser,
             intervals: Intervals {
                 focused: Duration::from_secs(3600),
@@ -218,5 +252,62 @@ async fn add_account_signs_in_and_starts_syncing() {
         rig.tokens.get("new@example.com").unwrap().as_deref(),
         Some("rt-new")
     );
+    handle.shutdown();
+}
+
+fn calendar_list_calls(requests: &[wiremock::Request]) -> usize {
+    requests
+        .iter()
+        .filter(|r| r.url.path() == "/calendar/v3/users/me/calendarList")
+        .count()
+}
+
+#[tokio::test]
+async fn keychain_read_error_is_retried() {
+    let rig = Rig::new().await;
+    rig.seed_account();
+    rig.mount_happy_google().await;
+    rig.failing_reads.store(1, SeqCst);
+    let handle = rig.start(no_browser());
+    wait_for(&handle.events, |ev| {
+        matches!(
+            ev,
+            SyncEvent::Status {
+                state: SyncState::Error(_),
+                ..
+            }
+        )
+    })
+    .await;
+    // A wake-up retries at once instead of waiting out the backoff.
+    handle.commands.send(Command::SyncNow).await.unwrap();
+    wait_for(&handle.events, synced("acc")).await;
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn new_account_ignores_earlier_wake_ups() {
+    let rig = Rig::new().await;
+    rig.mount_happy_google().await;
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(json!({"sub": "sub-1", "email": "new@example.com"}).to_string());
+    Mock::given(method("POST")).and(path("/token")).and(body_string_contains("grant_type=authorization_code"))
+        .respond_with(ok(json!({"access_token": "at", "expires_in": 3600, "refresh_token": "rt-new", "id_token": format!("h.{payload}.s")})))
+        .mount(&rig.server).await;
+    let browser: Arc<dyn Fn(&Url) + Send + Sync> = Arc::new(|url: &Url| {
+        let q: HashMap<String, String> = url.query_pairs().into_owned().collect();
+        let callback = format!("{}/?code=c&state={}", q["redirect_uri"], q["state"]);
+        tokio::spawn(async move {
+            let _ = reqwest::get(callback).await;
+        });
+    });
+    let handle = rig.start(browser);
+    // Sent before the account exists; its loop must not take it as a wake-up.
+    handle.commands.send(Command::SyncNow).await.unwrap();
+    handle.commands.send(Command::AddAccount).await.unwrap();
+    wait_for(&handle.events, synced("sub-1")).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let requests = rig.server.received_requests().await.unwrap();
+    assert_eq!(calendar_list_calls(&requests), 1, "one round only");
     handle.shutdown();
 }

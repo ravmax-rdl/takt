@@ -1,6 +1,6 @@
 //! One sync round for one account, and what to do when Google says no.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeDelta, Utc};
@@ -45,7 +45,7 @@ impl SyncError {
     }
 }
 
-/// The error a round reports: the most serious, the earliest among equals.
+/// The error a round reports: one of the most serious, the earliest among equals.
 fn most_serious(errors: Vec<SyncError>) -> Option<SyncError> {
     errors.into_iter().min_by_key(SyncError::severity)
 }
@@ -53,12 +53,30 @@ fn most_serious(errors: Vec<SyncError>) -> Option<SyncError> {
 /// 403 reasons that mean "not now" rather than "no access".
 const TEMPORARY_FORBIDDEN: &[&str] = &["dailyLimitExceeded", "quotaExceeded"];
 
+/// 403 reasons about the app or the grant (API switched off, scope missing),
+/// not about one calendar: every calendar would fail the same way, so none is
+/// removed for them.
+const ACCOUNT_FORBIDDEN: &[&str] = &[
+    "accessNotConfigured",
+    "insufficientPermissions",
+    "SERVICE_DISABLED",
+    "ACCESS_TOKEN_SCOPE_INSUFFICIENT",
+];
+
 fn is_lost_access(error: &GoogleError) -> bool {
     match error {
         GoogleError::NotFound => true,
-        GoogleError::Forbidden { reason } => !TEMPORARY_FORBIDDEN.contains(&reason.as_str()),
+        GoogleError::Forbidden { reason } => {
+            let reason = reason.as_str();
+            !TEMPORARY_FORBIDDEN.contains(&reason) && !ACCOUNT_FORBIDDEN.contains(&reason)
+        }
         _ => false,
     }
+}
+
+/// Whether a round should stop: every later request would fail the same way.
+fn ends_round(error: &SyncError) -> bool {
+    error.needs_reauth() || error.is_offline()
 }
 
 pub struct AccountEngine {
@@ -93,17 +111,21 @@ impl AccountEngine {
     /// non-hidden calendar's events (primary first, four at a time), then tasks.
     ///
     /// One failing part does not stop the others. A revoked grant or lost
-    /// connection on the calendar list or meta ends the round at once, since
-    /// every later request would fail the same way. Otherwise the round runs to
-    /// the end and returns the most serious error: re-auth, then offline, then
-    /// the first other one.
+    /// connection on the calendar list, meta or any calendar ends the round
+    /// there, since every later request would fail the same way. A 403 on the
+    /// calendar list is account-wide, so the events step is skipped rather
+    /// than letting every calendar fail (or be removed) for it. Otherwise the
+    /// round runs to the end and returns the most serious error: re-auth, then
+    /// offline, then the first other one.
     pub async fn round(&self, with_meta: bool) -> Result<(), SyncError> {
         let mut errors = Vec::new();
+        let mut skip_events = false;
         if let Err(error) = self.sync_calendar_list().await {
-            if error.needs_reauth() || error.is_offline() {
+            if ends_round(&error) {
                 return Err(error);
             }
-            tracing::warn!(account = %self.account_id, %error, "calendar list sync failed; using stored calendars");
+            skip_events = matches!(error, SyncError::Google(GoogleError::Forbidden { .. }));
+            tracing::warn!(account = %self.account_id, %error, skip_events, "calendar list sync failed; using stored calendars");
             errors.push(error);
         }
         if with_meta {
@@ -111,13 +133,26 @@ impl AccountEngine {
                 Ok(()) => {
                     *self.meta_synced_at.lock().expect("meta mutex poisoned") = Some(Instant::now())
                 }
-                Err(error) if error.needs_reauth() || error.is_offline() => return Err(error),
+                Err(error) if ends_round(&error) => return Err(error),
                 Err(error) => {
                     tracing::warn!(account = %self.account_id, %error, "settings and colours sync failed");
                     errors.push(error);
                 }
             }
         }
+        if !skip_events {
+            self.sync_events(&mut errors).await?;
+            if errors.iter().any(ends_round) {
+                return most_serious(errors).map_or(Ok(()), Err);
+            }
+        }
+        self.sync_tasks(&mut errors).await;
+        most_serious(errors).map_or(Ok(()), Err)
+    }
+
+    /// Every non-hidden calendar's events, primary first, four at a time.
+    /// Per-calendar errors go to `errors`.
+    async fn sync_events(&self, errors: &mut Vec<SyncError>) -> Result<(), SyncError> {
         let calendars: Vec<String> = self
             .with_store(|s| s.calendars(Some(&self.account_id)))?
             .into_iter()
@@ -136,11 +171,7 @@ impl AccountEngine {
             tracing::warn!(account = %self.account_id, %error, "calendar sync failed");
             errors.push(error);
         }
-        if let Err(error) = self.sync_tasks().await {
-            tracing::warn!(account = %self.account_id, %error, "tasks sync failed");
-            errors.push(error);
-        }
-        most_serious(errors).map_or(Ok(()), Err)
+        Ok(())
     }
 
     /// Whether settings and colours were last synced longer than `every` ago
@@ -250,64 +281,84 @@ impl AccountEngine {
         }
     }
 
-    async fn sync_tasks(&self) -> Result<(), SyncError> {
+    /// Task lists, then each list's tasks. One failing list does not stop
+    /// the others unless the error ends the round. Errors go to `errors`.
+    async fn sync_tasks(&self, errors: &mut Vec<SyncError>) {
         let lists = match self.client.task_lists().await {
             Ok(lists) => lists,
             Err(GoogleError::Forbidden { reason })
                 if !TEMPORARY_FORBIDDEN.contains(&reason.as_str()) =>
             {
                 tracing::warn!(account = %self.account_id, %reason, "Tasks API not available; skipping tasks");
-                return Ok(());
+                return;
             }
-            Err(e) => return Err(e.into()),
+            Err(error) => {
+                tracing::warn!(account = %self.account_id, %error, "task lists sync failed");
+                return errors.push(error.into());
+            }
         };
-        let changes = self.with_store(|s| s.apply_task_lists(&self.account_id, &lists))?;
-        self.emit(changes);
+        match self.with_store(|s| s.apply_task_lists(&self.account_id, &lists)) {
+            Ok(changes) => self.emit(changes),
+            Err(error) => {
+                tracing::warn!(account = %self.account_id, %error, "cannot store task lists");
+                return errors.push(error);
+            }
+        }
         for list in &lists {
             let list_id = list.fields.id.as_str();
-            let since = self
-                .with_store(|s| s.task_checkpoint(&self.account_id, list_id))?
-                .map(|checkpoint| checkpoint - TASKS_OVERLAP);
-            let mut page_token: Option<String> = None;
-            // The newest `updated` across every page; stored only with the last
-            // page so an interrupted listing starts again from the old checkpoint.
-            let mut newest: Option<DateTime<Utc>> = None;
-            loop {
-                let page = match self
-                    .client
-                    .tasks_page(list_id, since, page_token.as_deref())
-                    .await
-                {
-                    Ok(page) => page,
-                    Err(GoogleError::NotFound) => break,
-                    Err(e) => return Err(e.into()),
-                };
-                newest = page
-                    .items
-                    .iter()
-                    .filter_map(|item| item.fields.updated)
-                    .chain(newest)
-                    .max();
-                let last = page.next_page_token.is_none();
-                let checkpoint = if last { newest } else { None };
-                let changes = self.with_store(|s| {
-                    s.apply_tasks_page(&self.account_id, list_id, &page.items, checkpoint)
-                })?;
-                self.emit(changes);
-                match page.next_page_token {
-                    Some(next) => page_token = Some(next),
-                    None => break,
+            if let Err(error) = self.sync_task_list(list_id).await {
+                tracing::warn!(account = %self.account_id, list = %list_id, %error, "task list sync failed");
+                let stop = ends_round(&error);
+                errors.push(error);
+                if stop {
+                    return;
                 }
             }
         }
-        Ok(())
+    }
+
+    async fn sync_task_list(&self, list_id: &str) -> Result<(), SyncError> {
+        let since = self
+            .with_store(|s| s.task_checkpoint(&self.account_id, list_id))?
+            .map(|checkpoint| checkpoint - TASKS_OVERLAP);
+        let mut page_token: Option<String> = None;
+        // The newest `updated` across every page; stored only with the last
+        // page so an interrupted listing starts again from the old checkpoint.
+        let mut newest: Option<DateTime<Utc>> = None;
+        loop {
+            let page = match self
+                .client
+                .tasks_page(list_id, since, page_token.as_deref())
+                .await
+            {
+                Ok(page) => page,
+                Err(GoogleError::NotFound) => return Ok(()),
+                Err(e) => return Err(e.into()),
+            };
+            newest = page
+                .items
+                .iter()
+                .filter_map(|item| item.fields.updated)
+                .chain(newest)
+                .max();
+            let last = page.next_page_token.is_none();
+            let checkpoint = if last { newest } else { None };
+            let changes = self.with_store(|s| {
+                s.apply_tasks_page(&self.account_id, list_id, &page.items, checkpoint)
+            })?;
+            self.emit(changes);
+            match page.next_page_token {
+                Some(next) => page_token = Some(next),
+                None => return Ok(()),
+            }
+        }
     }
 
     fn with_store<T>(
         &self,
         f: impl FnOnce(&mut Store) -> Result<T, StoreError>,
     ) -> Result<T, SyncError> {
-        let mut store = self.store.lock().expect("store mutex poisoned");
+        let mut store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
         Ok(f(&mut store)?)
     }
 
@@ -371,6 +422,14 @@ mod tests {
         assert!(is_lost_access(&forbidden("forbidden")));
         assert!(!is_lost_access(&forbidden("dailyLimitExceeded")));
         assert!(!is_lost_access(&forbidden("quotaExceeded")));
+        for reason in [
+            "accessNotConfigured",
+            "insufficientPermissions",
+            "SERVICE_DISABLED",
+            "ACCESS_TOKEN_SCOPE_INSUFFICIENT",
+        ] {
+            assert!(!is_lost_access(&forbidden(reason)), "{reason}");
+        }
         assert!(!is_lost_access(&GoogleError::Gone));
     }
 }
