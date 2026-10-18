@@ -58,6 +58,10 @@ pub fn load(path: &Path) -> ConfigState {
             );
             if id.is_empty() || secret.is_empty() {
                 ConfigState::Invalid("client_id and client_secret must both be set".into())
+            } else if id.contains("<your") || secret.contains("<your") {
+                ConfigState::Invalid(
+                    "replace the placeholder client_id/client_secret in config.toml".into(),
+                )
             } else {
                 ConfigState::Ready(OAuthClient {
                     client_id: id.to_owned(),
@@ -113,8 +117,27 @@ mod tests {
     }
 
     #[test]
-    fn example_parses_as_ready() {
+    fn example_placeholders_are_invalid() {
         let (_dir, path) = write(EXAMPLE);
-        assert!(matches!(load(&path), ConfigState::Ready(_)));
+        assert_eq!(
+            load(&path),
+            ConfigState::Invalid(
+                "replace the placeholder client_id/client_secret in config.toml".into()
+            )
+        );
+    }
+
+    #[test]
+    fn missing_google_section_is_invalid() {
+        let (_dir, path) = write("[other]\nkey = 1\n");
+        assert!(matches!(load(&path), ConfigState::Invalid(_)));
+    }
+
+    #[test]
+    fn directory_at_config_path_is_invalid() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::create_dir(&path).unwrap();
+        assert!(matches!(load(&path), ConfigState::Invalid(_)));
     }
 }
