@@ -1,6 +1,7 @@
 //! Google Calendar v3 and Tasks v1 clients for takt.
 
 mod auth;
+mod client;
 mod error;
 pub mod model;
 mod token_store;
@@ -9,6 +10,7 @@ pub use auth::{
     Auth, IdClaims, OAuthClient, Pkce, Redirect, SCOPES, SignedIn, authorization_url,
     decode_id_token, exchange_code, parse_redirect_request_line, sign_in,
 };
+pub use client::{GoogleClient, RetryPolicy};
 pub use error::GoogleError;
 pub use reqwest::Url;
 pub use token_store::{KeyringTokenStore, MemoryTokenStore, TokenStore};

@@ -23,8 +23,6 @@ pub enum GoogleError {
 }
 
 impl GoogleError {
-    // Used by the client in a later task.
-    #[allow(dead_code)]
     pub(crate) fn from_reqwest(error: reqwest::Error) -> Self {
         GoogleError::Network(error.to_string())
     }
