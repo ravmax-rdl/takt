@@ -34,7 +34,11 @@ fn normalize_line(line: &str, all_day: bool, tz: Tz) -> String {
     let Some((head, value)) = line.split_once(':') else {
         return line.to_string();
     };
-    let name = head.split(';').next().unwrap_or_default().to_ascii_uppercase();
+    let name = head
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
     match name.as_str() {
         "RRULE" | "EXRULE" => format!("{name}:{}", normalize_until(value, all_day, tz)),
         "EXDATE" | "RDATE" => {
@@ -72,10 +76,15 @@ fn until_value(value: &str, all_day: bool, tz: Tz) -> String {
         if let Ok(d) = NaiveDate::parse_from_str(value, "%Y%m%d") {
             return utc_stamp(d.and_hms_opt(23, 59, 59).expect("valid time"), tz);
         }
-    } else if value.len() == 15 && !value.ends_with('Z') {
-        if let Ok(local) = NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S") {
-            return if all_day { format!("{value}Z") } else { utc_stamp(local, tz) };
-        }
+    } else if value.len() == 15
+        && !value.ends_with('Z')
+        && let Ok(local) = NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S")
+    {
+        return if all_day {
+            format!("{value}Z")
+        } else {
+            utc_stamp(local, tz)
+        };
     }
     value.to_string()
 }
@@ -108,7 +117,11 @@ mod tests {
     #[test]
     fn timed_date_only_until_is_end_of_local_day() {
         assert_eq!(
-            normalize_line("RRULE:FREQ=DAILY;UNTIL=20261012", false, chrono_tz::America::Los_Angeles),
+            normalize_line(
+                "RRULE:FREQ=DAILY;UNTIL=20261012",
+                false,
+                chrono_tz::America::Los_Angeles
+            ),
             "RRULE:FREQ=DAILY;UNTIL=20261013T065959Z"
         );
     }
@@ -116,7 +129,11 @@ mod tests {
     #[test]
     fn floating_until_is_converted_from_series_zone() {
         assert_eq!(
-            normalize_line("RRULE:FREQ=WEEKLY;UNTIL=20261012T090000", false, chrono_tz::Europe::London),
+            normalize_line(
+                "RRULE:FREQ=WEEKLY;UNTIL=20261012T090000",
+                false,
+                chrono_tz::Europe::London
+            ),
             "RRULE:FREQ=WEEKLY;UNTIL=20261012T080000Z"
         );
     }

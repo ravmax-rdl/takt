@@ -16,5 +16,8 @@ pub fn day(s: &str) -> When {
 }
 
 pub fn range(start: &str, end: &str) -> Range {
-    Range { start: utc(start), end: utc(end) }
+    Range {
+        start: utc(start),
+        end: utc(end),
+    }
 }
