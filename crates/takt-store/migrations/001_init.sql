@@ -9,6 +9,7 @@ CREATE TABLE accounts (
 CREATE TABLE account_settings (
     account_id TEXT NOT NULL REFERENCES accounts (account_id) ON DELETE CASCADE,
     key TEXT NOT NULL,
+    raw_json TEXT NOT NULL,
     value TEXT NOT NULL,
     PRIMARY KEY (account_id, key)
 );
@@ -17,6 +18,8 @@ CREATE TABLE colors (
     account_id TEXT NOT NULL REFERENCES accounts (account_id) ON DELETE CASCADE,
     kind TEXT NOT NULL CHECK (kind IN ('calendar', 'event')),
     color_id TEXT NOT NULL,
+    -- This colour's entry from colors.get, e.g. {"background": ..., "foreground": ...}.
+    raw_json TEXT NOT NULL,
     background TEXT NOT NULL,
     foreground TEXT NOT NULL,
     PRIMARY KEY (account_id, kind, color_id)

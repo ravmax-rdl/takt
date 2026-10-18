@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use futures::stream::{self, StreamExt};
-use takt_google::{GoogleClient, GoogleError};
+use takt_google::model::{Colors, Item, Page, Setting};
+use takt_google::{GoogleClient, GoogleError, Url};
 use takt_store::{ChangeSet, Store, StoreError};
 
 use crate::SyncEvent;
@@ -43,6 +44,16 @@ impl SyncError {
             2
         }
     }
+}
+
+fn calendar_url(client: &GoogleClient, segments: &[&str]) -> Result<Url, GoogleError> {
+    let base = &client.endpoints().calendar;
+    let mut url = base.clone();
+    url.path_segments_mut()
+        .map_err(|_| GoogleError::Decode(format!("base URL cannot take a path: {base}")))?
+        .pop_if_empty()
+        .extend(segments);
+    Ok(url)
 }
 
 /// The error a round reports: the most serious, the earliest among equals.
@@ -191,14 +202,39 @@ impl AccountEngine {
     }
 
     async fn sync_meta(&self) -> Result<(), SyncError> {
-        let colors = self.client.colors().await?;
-        let settings = self.client.settings().await?;
+        let colors = self.fetch_colors().await?;
+        let settings = self.fetch_settings().await?;
         self.with_store(|s| {
             s.put_colors(&self.account_id, &colors)?;
             s.put_settings(&self.account_id, &settings)
         })?;
         self.emit_everything();
         Ok(())
+    }
+
+    /// `colors.get` with its JSON kept. (`GoogleClient::colors` drops it.)
+    async fn fetch_colors(&self) -> Result<Item<Colors>, GoogleError> {
+        let url = calendar_url(&self.client, &["colors"])?;
+        Item::from_value(self.client.get_json(url).await?)
+    }
+
+    /// Every page of `settings.list`, each item with its JSON kept.
+    async fn fetch_settings(&self) -> Result<Vec<Item<Setting>>, GoogleError> {
+        let mut settings = Vec::new();
+        let mut page_token: Option<String> = None;
+        loop {
+            let mut url = calendar_url(&self.client, &["users", "me", "settings"])?;
+            url.query_pairs_mut().append_pair("maxResults", "250");
+            if let Some(token) = &page_token {
+                url.query_pairs_mut().append_pair("pageToken", token);
+            }
+            let page: Page<Setting> = Page::from_value(self.client.get_json(url).await?)?;
+            settings.extend(page.items);
+            match page.next_page_token {
+                Some(next) => page_token = Some(next),
+                None => return Ok(settings),
+            }
+        }
     }
 
     async fn sync_calendar(&self, calendar_id: &str) -> Result<(), SyncError> {

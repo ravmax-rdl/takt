@@ -96,22 +96,50 @@ fn calendar_list_page_upserts_deletes_and_stores_token() {
 #[test]
 fn settings_and_palette_round_trip() {
     let mut store = with_account();
-    store
-        .put_settings(
-            "acc",
-            &[Setting {
-                id: "format24HourTime".into(),
-                value: "false".into(),
-            }],
-        )
-        .unwrap();
+    let setting: Item<Setting> =
+        Item::from_value(json!({"kind": "calendar#setting", "etag": "\"e1\"", "id": "format24HourTime", "value": "false"}))
+            .unwrap();
+    store.put_settings("acc", &[setting]).unwrap();
     assert_eq!(store.settings("acc").unwrap()["format24HourTime"], "false");
-    let colors: Colors = serde_json::from_value(
-        json!({"event": {"11": {"background": "#dc2127", "foreground": "#1d1d1d"}}}),
+    let colors: Item<Colors> = Item::from_value(
+        json!({"kind": "calendar#colors", "event": {"11": {"background": "#dc2127", "foreground": "#1d1d1d"}}}),
     )
     .unwrap();
     store.put_colors("acc", &colors).unwrap();
     assert_eq!(store.palette("acc").unwrap().event["11"].0, "#dc2127");
+}
+
+#[test]
+fn settings_and_colours_keep_their_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("takt.sqlite3");
+    let mut store = Store::open(&path).unwrap();
+    store.upsert_account("acc", "me@example.com").unwrap();
+    let setting = r#"{"kind":"calendar#setting","etag":"\"e1\"","id":"weekStart","value":"1"}"#;
+    store
+        .put_settings(
+            "acc",
+            &[Item::from_value(serde_json::from_str(setting).unwrap()).unwrap()],
+        )
+        .unwrap();
+    let colour = r##"{"foreground":"#1d1d1d","background":"#ac725e"}"##;
+    let colors: Item<Colors> = Item::from_value(
+        serde_json::from_str(&format!(r#"{{"calendar":{{"1":{colour}}},"event":{{}}}}"#)).unwrap(),
+    )
+    .unwrap();
+    store.put_colors("acc", &colors).unwrap();
+    drop(store);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let raw: String = conn
+        .query_row("SELECT raw_json FROM account_settings", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(raw, setting);
+    let raw: String = conn
+        .query_row("SELECT raw_json FROM colors", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(raw, colour);
 }
 
 #[test]
@@ -123,6 +151,35 @@ fn removing_an_account_removes_its_calendars() {
     store.remove_account("acc").unwrap();
     assert!(store.accounts().unwrap().is_empty());
     assert!(store.calendars(None).unwrap().is_empty());
+    // Signing in again starts clean rather than finding the old rows.
+    store.upsert_account("acc", "me@example.com").unwrap();
+    assert!(store.calendars(Some("acc")).unwrap().is_empty());
+}
+
+#[test]
+fn calendars_are_kept_per_account() {
+    let mut store = with_account();
+    store.upsert_account("acc2", "other@example.com").unwrap();
+    let shared = || cal(json!({"id": "team@group.calendar.google.com", "summary": "Team"}));
+    store
+        .apply_calendar_list_page("acc", &[shared()], None)
+        .unwrap();
+    store
+        .apply_calendar_list_page("acc2", &[shared()], None)
+        .unwrap();
+    store
+        .apply_calendar_list_page(
+            "acc",
+            &[cal(
+                json!({"id": "team@group.calendar.google.com", "deleted": true}),
+            )],
+            None,
+        )
+        .unwrap();
+    assert!(store.calendars(Some("acc")).unwrap().is_empty());
+    let other = store.calendars(Some("acc2")).unwrap();
+    assert_eq!(other.len(), 1);
+    assert_eq!(other[0].calendar_id, "team@group.calendar.google.com");
 }
 
 #[test]

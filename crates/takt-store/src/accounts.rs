@@ -179,10 +179,11 @@ impl Store {
         Ok(())
     }
 
+    /// Replaces the account's settings with the full `settings.list` result.
     pub fn put_settings(
         &mut self,
         account_id: &str,
-        settings: &[Setting],
+        settings: &[Item<Setting>],
     ) -> Result<(), StoreError> {
         let tx = self.conn.transaction()?;
         tx.execute(
@@ -191,8 +192,8 @@ impl Store {
         )?;
         for s in settings {
             tx.execute(
-                "INSERT INTO account_settings (account_id, key, value) VALUES (?1, ?2, ?3)",
-                params![account_id, s.id, s.value],
+                "INSERT INTO account_settings (account_id, key, raw_json, value) VALUES (?1, ?2, ?3, ?4)",
+                params![account_id, s.fields.id, s.raw.to_string(), s.fields.value],
             )?;
         }
         tx.commit()?;
@@ -207,17 +208,34 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    pub fn put_colors(&mut self, account_id: &str, colors: &Colors) -> Result<(), StoreError> {
+    /// Replaces the account's palette with a `colors.get` response. Each row
+    /// keeps that colour's own object from the response.
+    pub fn put_colors(
+        &mut self,
+        account_id: &str,
+        colors: &Item<Colors>,
+    ) -> Result<(), StoreError> {
         let tx = self.conn.transaction()?;
         tx.execute(
             "DELETE FROM colors WHERE account_id = ?1",
             params![account_id],
         )?;
-        for (kind, map) in [("calendar", &colors.calendar), ("event", &colors.event)] {
+        for (kind, map) in [
+            ("calendar", &colors.fields.calendar),
+            ("event", &colors.fields.event),
+        ] {
             for (id, def) in map {
+                let raw = colors
+                    .raw
+                    .get(kind)
+                    .and_then(|entries| entries.get(id))
+                    .ok_or_else(|| {
+                        StoreError::Corrupt(format!("colour {kind}/{id} missing from its JSON"))
+                    })?;
                 tx.execute(
-                    "INSERT INTO colors (account_id, kind, color_id, background, foreground) VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![account_id, kind, id, def.background, def.foreground],
+                    "INSERT INTO colors (account_id, kind, color_id, raw_json, background, foreground)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![account_id, kind, id, raw.to_string(), def.background, def.foreground],
                 )?;
             }
         }

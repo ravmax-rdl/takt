@@ -149,7 +149,7 @@ impl Store {
             "SELECT t.account_id, t.list_id, l.title, t.task_id, t.title, t.due_date, t.status
              FROM tasks t JOIN task_lists l ON l.account_id = t.account_id AND l.list_id = t.list_id
              WHERE t.hidden = 0 AND t.due_date >= ?1 AND t.due_date < ?2
-             ORDER BY t.due_date, t.title COLLATE NOCASE",
+             ORDER BY t.due_date, t.title COLLATE NOCASE, t.account_id, t.list_id, t.task_id",
         )?;
         let rows = stmt.query_map(
             params![

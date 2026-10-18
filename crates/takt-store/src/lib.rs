@@ -36,7 +36,12 @@ impl Store {
             std::fs::create_dir_all(dir).map_err(|e| StoreError::Io(e.to_string()))?;
         }
         let conn = Connection::open(path)?;
-        conn.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
+        let mode: String =
+            conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;
+        if !mode.eq_ignore_ascii_case("wal") {
+            // Readers and the writer will block each other (e.g. on a network file system).
+            tracing::warn!(%mode, path = %path.display(), "database is not in WAL mode");
+        }
         Self::init(conn)
     }
 

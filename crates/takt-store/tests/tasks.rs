@@ -71,6 +71,10 @@ fn deleted_task_is_removed() {
             .is_empty()
     );
     assert!(changes.task_lists.contains("L1"));
+    assert!(changes.affects(
+        Utc.with_ymd_and_hms(2026, 10, 20, 10, 0, 0).unwrap(),
+        Utc.with_ymd_and_hms(2026, 10, 20, 11, 0, 0).unwrap()
+    ));
 }
 
 fn t(hour: u32) -> chrono::DateTime<Utc> {
@@ -131,9 +135,9 @@ fn list_missing_from_full_list_is_removed_with_its_tasks() {
             "acc",
             "L1",
             &[task(
-                json!({"id": "a", "title": "x", "due": "2026-10-20T00:00:00.000Z"}),
+                json!({"id": "a", "title": "x", "due": "2026-10-20T00:00:00.000Z", "updated": "2026-10-17T11:00:00.000Z"}),
             )],
-            None,
+            Some(t(11)),
         )
         .unwrap();
     store
@@ -146,6 +150,92 @@ fn list_missing_from_full_list_is_removed_with_its_tasks() {
             .is_empty()
     );
     assert_eq!(store.task_checkpoint("acc", "L2").unwrap(), None);
+    // If the list comes back it starts from scratch: no old tasks, no checkpoint.
+    store
+        .apply_task_lists("acc", &[list("L1", "My Tasks")])
+        .unwrap();
+    assert!(
+        store
+            .tasks_due(d(2026, 10, 1), d(2026, 11, 1))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(store.task_checkpoint("acc", "L1").unwrap(), None);
+}
+
+#[test]
+fn tasks_due_sorts_by_date_then_title_ignoring_case_and_excludes_the_end_date() {
+    let mut store = seeded();
+    store
+        .apply_tasks_page(
+            "acc",
+            "L1",
+            &[
+                task(json!({"id": "1", "title": "banana", "due": "2026-10-20T00:00:00.000Z"})),
+                task(json!({"id": "2", "title": "Apple", "due": "2026-10-20T00:00:00.000Z"})),
+                task(json!({"id": "3", "title": "cherry", "due": "2026-10-19T00:00:00.000Z"})),
+                task(json!({"id": "4", "title": "Bread", "due": "2026-10-20T00:00:00.000Z"})),
+                task(json!({"id": "5", "title": "At the end", "due": "2026-10-21T00:00:00.000Z"})),
+            ],
+            None,
+        )
+        .unwrap();
+    let got = store.tasks_due(d(2026, 10, 19), d(2026, 10, 21)).unwrap();
+    let titles: Vec<_> = got.iter().map(|t| t.title.as_str()).collect();
+    assert_eq!(titles, ["cherry", "Apple", "banana", "Bread"]);
+}
+
+#[test]
+fn tasks_are_kept_per_account() {
+    let mut store = seeded();
+    store.upsert_account("acc2", "other@example.com").unwrap();
+    // Google list and task IDs are per account; the same IDs must not collide.
+    store
+        .apply_task_lists("acc2", &[list("L1", "Other Tasks")])
+        .unwrap();
+    let due = |title: &str| {
+        task(
+            json!({"id": "a", "title": title, "due": "2026-10-20T00:00:00.000Z", "updated": "2026-10-17T11:00:00.000Z"}),
+        )
+    };
+    store
+        .apply_tasks_page("acc", "L1", &[due("Mine")], Some(t(11)))
+        .unwrap();
+    store
+        .apply_tasks_page("acc2", "L1", &[due("Theirs")], None)
+        .unwrap();
+    assert_eq!(store.task_checkpoint("acc2", "L1").unwrap(), None);
+    let got = store.tasks_due(d(2026, 10, 19), d(2026, 10, 21)).unwrap();
+    let rows: Vec<_> = got
+        .iter()
+        .map(|t| {
+            (
+                t.account_id.as_str(),
+                t.title.as_str(),
+                t.list_title.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("acc", "Mine", "My Tasks"),
+            ("acc2", "Theirs", "Other Tasks")
+        ]
+    );
+
+    store
+        .apply_tasks_page(
+            "acc",
+            "L1",
+            &[task(json!({"id": "a", "deleted": true}))],
+            None,
+        )
+        .unwrap();
+    store.apply_task_lists("acc", &[]).unwrap();
+    let got = store.tasks_due(d(2026, 10, 19), d(2026, 10, 21)).unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].account_id, "acc2");
 }
 
 #[test]
