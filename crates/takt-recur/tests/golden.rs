@@ -18,23 +18,34 @@ fn when(v: &Value) -> Option<When> {
         .map(|t| When::At(t.with_timezone(&Utc)))
 }
 
-fn master_from(v: &Value, calendar_tz: Option<&str>) -> Master {
-    Master {
-        id: v["id"].as_str().unwrap().to_owned(),
-        start: when(&v["start"]).unwrap(),
-        end: when(&v["end"]).unwrap(),
+fn str_at<'a>(v: &'a Value, what: &str) -> Result<&'a str, String> {
+    v.as_str().ok_or_else(|| format!("{what} is not a string"))
+}
+
+fn when_at(v: &Value, what: &str) -> Result<When, String> {
+    when(v).ok_or_else(|| format!("{what} is not a date or dateTime"))
+}
+
+fn array_at<'a>(v: &'a Value, what: &str) -> Result<&'a Vec<Value>, String> {
+    v.as_array()
+        .ok_or_else(|| format!("{what} is not an array"))
+}
+
+fn master_from(v: &Value, calendar_tz: Option<&str>) -> Result<Master, String> {
+    Ok(Master {
+        id: str_at(&v["id"], "master.id")?.to_owned(),
+        start: when_at(&v["start"], "master.start")?,
+        end: when_at(&v["end"], "master.end")?,
         tz: v["start"]["timeZone"]
             .as_str()
             .or(calendar_tz)
             .and_then(|n| n.parse().ok())
             .unwrap_or(chrono_tz::UTC),
-        recurrence: v["recurrence"]
-            .as_array()
-            .unwrap()
+        recurrence: array_at(&v["recurrence"], "master.recurrence")?
             .iter()
-            .map(|l| l.as_str().unwrap().to_owned())
-            .collect(),
-    }
+            .map(|l| str_at(l, "master.recurrence line").map(str::to_owned))
+            .collect::<Result<_, _>>()?,
+    })
 }
 
 fn exception_from(v: &Value) -> Option<Exception> {
@@ -50,10 +61,72 @@ fn exception_from(v: &Value) -> Option<Exception> {
     })
 }
 
-fn instant(v: &Value) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(v.as_str().unwrap())
-        .unwrap()
-        .with_timezone(&Utc)
+fn instant(v: &Value, what: &str) -> Result<DateTime<Utc>, String> {
+    DateTime::parse_from_rfc3339(str_at(v, what)?)
+        .map(|t| t.with_timezone(&Utc))
+        .map_err(|e| format!("{what}: {e}"))
+}
+
+/// Compares one fixture; `Err` describes a malformed fixture or a mismatch.
+fn check(fixture: &Value) -> Result<(), String> {
+    let range = Range {
+        start: instant(&fixture["range"]["start"], "range.start")?,
+        end: instant(&fixture["range"]["end"], "range.end")?,
+    };
+    // Google reads all-day dates in the calendar's zone at the range edges; compare away from them.
+    let inner = Range {
+        start: range.start + TimeDelta::days(1),
+        end: range.end - TimeDelta::days(1),
+    };
+    let keep = |start: &When| start.as_utc() >= inner.start && start.as_utc() < inner.end;
+
+    let master = master_from(&fixture["master"], fixture["calendarTimeZone"].as_str())?;
+    let exceptions: Vec<_> = array_at(&fixture["exceptions"], "exceptions")?
+        .iter()
+        .filter_map(exception_from)
+        .collect();
+    let expanded =
+        expand(&master, &exceptions, &range).map_err(|e| format!("expansion failed: {e:?}"))?;
+    let mut ours: Vec<(String, When, When)> = expanded
+        .into_iter()
+        .filter(|o| keep(&o.start))
+        .map(|o| (o.instance_id, o.start, o.end))
+        .collect();
+    let mut google: Vec<(String, When, When)> = Vec::new();
+    for i in array_at(&fixture["instances"], "instances")? {
+        if i["status"] == "cancelled" {
+            continue;
+        }
+        let instance = (
+            str_at(&i["id"], "instance id")?.to_owned(),
+            when_at(&i["start"], "instance start")?,
+            when_at(&i["end"], "instance end")?,
+        );
+        if keep(&instance.1) {
+            google.push(instance);
+        }
+    }
+    ours.sort_by(|a, b| a.0.cmp(&b.0));
+    google.sort_by(|a, b| a.0.cmp(&b.0));
+    if ours == google {
+        return Ok(());
+    }
+    let only_ours: Vec<_> = ours
+        .iter()
+        .filter(|o| !google.contains(o))
+        .take(3)
+        .collect();
+    let only_google: Vec<_> = google
+        .iter()
+        .filter(|g| !ours.contains(g))
+        .take(3)
+        .collect();
+    Err(format!(
+        "({}): {} ours vs {} Google's\n  only ours: {only_ours:?}\n  only Google's: {only_google:?}",
+        fixture["name"],
+        ours.len(),
+        google.len()
+    ))
 }
 
 #[test]
@@ -88,70 +161,8 @@ fn local_expansion_matches_google() {
                 continue;
             }
         };
-        let range = Range {
-            start: instant(&fixture["range"]["start"]),
-            end: instant(&fixture["range"]["end"]),
-        };
-        // Google reads all-day dates in the calendar's zone at the range edges; compare away from them.
-        let inner = Range {
-            start: range.start + TimeDelta::days(1),
-            end: range.end - TimeDelta::days(1),
-        };
-        let keep = |start: &When| start.as_utc() >= inner.start && start.as_utc() < inner.end;
-
-        let master = master_from(&fixture["master"], fixture["calendarTimeZone"].as_str());
-        let exceptions: Vec<_> = fixture["exceptions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(exception_from)
-            .collect();
-        let expanded = match expand(&master, &exceptions, &range) {
-            Ok(expanded) => expanded,
-            Err(e) => {
-                failures.push(format!("{}: expansion failed: {e:?}", file.display()));
-                continue;
-            }
-        };
-        let mut ours: Vec<(String, When, When)> = expanded
-            .into_iter()
-            .filter(|o| keep(&o.start))
-            .map(|o| (o.instance_id, o.start, o.end))
-            .collect();
-        let mut google: Vec<(String, When, When)> = fixture["instances"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|i| i["status"] != "cancelled")
-            .map(|i| {
-                (
-                    i["id"].as_str().unwrap().to_owned(),
-                    when(&i["start"]).unwrap(),
-                    when(&i["end"]).unwrap(),
-                )
-            })
-            .filter(|(_, start, _)| keep(start))
-            .collect();
-        ours.sort_by(|a, b| a.0.cmp(&b.0));
-        google.sort_by(|a, b| a.0.cmp(&b.0));
-        if ours != google {
-            let only_ours: Vec<_> = ours
-                .iter()
-                .filter(|o| !google.contains(o))
-                .take(3)
-                .collect();
-            let only_google: Vec<_> = google
-                .iter()
-                .filter(|g| !ours.contains(g))
-                .take(3)
-                .collect();
-            failures.push(format!(
-                "{} ({}): {} ours vs {} Google's\n  only ours: {only_ours:?}\n  only Google's: {only_google:?}",
-                file.display(),
-                fixture["name"],
-                ours.len(),
-                google.len()
-            ));
+        if let Err(e) = check(&fixture) {
+            failures.push(format!("{}: {e}", file.display()));
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
