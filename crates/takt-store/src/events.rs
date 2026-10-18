@@ -2,7 +2,7 @@ use chrono_tz::Tz;
 use rusqlite::{OptionalExtension, Transaction, params};
 use takt_google::model::{EventFields, Item};
 
-use crate::convert::{EventIndex, Kind, span_of, zone};
+use crate::convert::{EventIndex, Kind, exception_of, span_of, when_of, zone};
 use crate::{ChangeSet, Store, StoreError, TimeSpan};
 
 const UPSERT_EVENT: &str = "
@@ -50,7 +50,11 @@ impl Store {
                 changes.touch_calendar(calendar_id, Some(old));
             }
             if f.is_cancelled() && f.recurring_event_id.is_none() {
-                // A cancelled series may arrive as only {id, status}; remove its exceptions too.
+                // A cancelled series may arrive as only {id, status}; remove its exceptions too,
+                // reporting where they were (a moved one can sit outside the series' span).
+                for span in exception_spans(&tx, account_id, calendar_id, &f.id)? {
+                    changes.touch_calendar(calendar_id, Some(span));
+                }
                 tx.execute(
                     "DELETE FROM events WHERE account_id = ?1 AND calendar_id = ?2
                        AND (event_id = ?3 OR recurring_event_id = ?3)",
@@ -58,7 +62,29 @@ impl Store {
                 )?;
                 continue;
             }
-            let index = EventIndex::of(f, fallback);
+            let mut index = EventIndex::of(f, fallback);
+            if let (Some(series_id), Some(exception)) = (&f.recurring_event_id, exception_of(f)) {
+                let series = series_duration(&tx, account_id, calendar_id, series_id, items)?;
+                if f.end.is_none()
+                    && let (Some(start), Some(length)) = (index.start_utc, series)
+                {
+                    // A minimal cancelled instance has no times of its own; give it the series' length.
+                    index.end_utc = Some(start + length);
+                }
+                let own = index.start_utc.zip(index.end_utc).map(|(s, e)| e - s);
+                let length = series.or(own).unwrap_or(0);
+                // The slot the instance moved out of (or was cancelled from) changes too.
+                let original = exception.original_start.as_utc().timestamp();
+                if let Some(span) = span_of(
+                    Kind::Exception,
+                    Some(original),
+                    Some(original + length),
+                    exception.original_start.is_all_day(),
+                    None,
+                ) {
+                    changes.touch_calendar(calendar_id, Some(span));
+                }
+            }
             if let Some(span) = index.span() {
                 changes.touch_calendar(calendar_id, Some(span));
             }
@@ -183,4 +209,62 @@ fn stored_span(
     Ok(row.and_then(|(kind, start, end, all_day, series_end)| {
         span_of(Kind::parse(&kind), start, end, all_day, series_end)
     }))
+}
+
+/// How long one instance of a series lasts, in seconds: from the series in
+/// this page if it is there (it is newer), else from the stored series row.
+fn series_duration(
+    tx: &Transaction<'_>,
+    account_id: &str,
+    calendar_id: &str,
+    series_id: &str,
+    page: &[Item<EventFields>],
+) -> Result<Option<i64>, StoreError> {
+    let in_page = page
+        .iter()
+        .map(|item| &item.fields)
+        .find(|f| f.id == series_id && f.recurring_event_id.is_none() && !f.is_cancelled())
+        .and_then(|f| {
+            let start = f.start.as_ref().and_then(when_of)?;
+            let end = f.end.as_ref().and_then(when_of)?;
+            Some(end.as_utc().timestamp() - start.as_utc().timestamp())
+        });
+    if in_page.is_some() {
+        return Ok(in_page);
+    }
+    Ok(tx
+        .query_row(
+            "SELECT end_utc - start_utc FROM events
+             WHERE account_id = ?1 AND calendar_id = ?2 AND event_id = ?3 AND kind = 'master'",
+            params![account_id, calendar_id, series_id],
+            |row| row.get::<_, Option<i64>>(0),
+        )
+        .optional()?
+        .flatten())
+}
+
+/// The stored spans of a series' exceptions.
+fn exception_spans(
+    tx: &Transaction<'_>,
+    account_id: &str,
+    calendar_id: &str,
+    series_id: &str,
+) -> Result<Vec<TimeSpan>, StoreError> {
+    let mut stmt = tx.prepare(
+        "SELECT start_utc, end_utc, all_day FROM events
+         WHERE account_id = ?1 AND calendar_id = ?2 AND recurring_event_id = ?3",
+    )?;
+    let rows = stmt.query_map(params![account_id, calendar_id, series_id], |row| {
+        Ok((
+            row.get::<_, Option<i64>>(0)?,
+            row.get::<_, Option<i64>>(1)?,
+            row.get::<_, bool>(2)?,
+        ))
+    })?;
+    let mut spans = Vec::new();
+    for row in rows {
+        let (start, end, all_day) = row?;
+        spans.extend(span_of(Kind::Exception, start, end, all_day, None));
+    }
+    Ok(spans)
 }

@@ -191,3 +191,125 @@ fn removing_a_calendar_removes_its_events() {
     store.remove_calendar("acc", "cal").unwrap();
     assert!(store.event_ids("acc", "cal").unwrap().is_empty());
 }
+
+fn at(day: u32, hour: u32, minute: u32) -> chrono::DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 10, day, hour, minute, 0)
+        .unwrap()
+}
+
+fn moved_exception() -> serde_json::Value {
+    json!({
+        "id": "m_20261012T090000Z", "status": "confirmed", "summary": "1:1 (moved)", "recurringEventId": "m",
+        "originalStartTime": {"dateTime": "2026-10-12T10:00:00+01:00", "timeZone": "Europe/London"},
+        "start": {"dateTime": "2026-10-13T10:00:00+01:00"}, "end": {"dateTime": "2026-10-13T10:30:00+01:00"}
+    })
+}
+
+#[test]
+fn moved_exception_reports_its_original_slot() {
+    let mut store = seeded();
+    store
+        .apply_events_page("acc", "cal", &[ev(weekly_master())], None)
+        .unwrap();
+    let changes = store
+        .apply_events_page("acc", "cal", &[ev(moved_exception())], None)
+        .unwrap();
+    assert!(
+        changes.affects(at(12, 9, 10), at(12, 9, 20)),
+        "original slot"
+    );
+    assert!(changes.affects(at(13, 9, 10), at(13, 9, 20)), "new slot");
+    assert!(!changes.affects(at(12, 8, 0), at(12, 8, 50)));
+}
+
+#[test]
+fn minimal_cancelled_instance_lasts_as_long_as_its_series() {
+    let mut store = seeded();
+    store
+        .apply_events_page("acc", "cal", &[ev(weekly_master())], None)
+        .unwrap();
+    let cancelled = json!({
+        "id": "m_20261012T090000Z", "status": "cancelled", "recurringEventId": "m",
+        "originalStartTime": {"dateTime": "2026-10-12T10:00:00+01:00", "timeZone": "Europe/London"}
+    });
+    let changes = store
+        .apply_events_page("acc", "cal", &[ev(cancelled.clone())], None)
+        .unwrap();
+    assert!(changes.affects(at(12, 9, 20), at(12, 9, 25)));
+    // Its stored span has the series' length too, so a later change reports all of it.
+    let changes = store
+        .apply_events_page("acc", "cal", &[ev(cancelled)], None)
+        .unwrap();
+    assert!(changes.affects(at(12, 9, 20), at(12, 9, 25)));
+}
+
+#[test]
+fn cancelled_series_reports_exceptions_moved_past_its_end() {
+    let mut store = seeded();
+    let mut master = weekly_master();
+    master["recurrence"] = json!(["RRULE:FREQ=WEEKLY;COUNT=3"]);
+    let moved = json!({
+        "id": "m_20261019T090000Z", "status": "confirmed", "summary": "1:1 (moved)", "recurringEventId": "m",
+        "originalStartTime": {"dateTime": "2026-10-19T10:00:00+01:00", "timeZone": "Europe/London"},
+        "start": {"dateTime": "2026-11-02T10:00:00Z"}, "end": {"dateTime": "2026-11-02T10:30:00Z"}
+    });
+    store
+        .apply_events_page("acc", "cal", &[ev(master), ev(moved)], None)
+        .unwrap();
+    let changes = store
+        .apply_events_page(
+            "acc",
+            "cal",
+            &[ev(json!({"id": "m", "status": "cancelled"}))],
+            None,
+        )
+        .unwrap();
+    assert!(store.event_ids("acc", "cal").unwrap().is_empty());
+    assert!(changes.affects(
+        Utc.with_ymd_and_hms(2026, 11, 2, 10, 10, 0).unwrap(),
+        Utc.with_ymd_and_hms(2026, 11, 2, 10, 20, 0).unwrap()
+    ));
+}
+
+#[test]
+fn exception_arriving_before_its_master() {
+    let mut store = seeded();
+    let changes = store
+        .apply_events_page("acc", "cal", &[ev(moved_exception())], None)
+        .unwrap();
+    // No series yet: the original slot is reported with the exception's own length.
+    assert!(changes.affects(at(12, 9, 10), at(12, 9, 20)));
+    assert!(changes.affects(at(13, 9, 10), at(13, 9, 20)));
+    store
+        .apply_events_page("acc", "cal", &[ev(weekly_master())], None)
+        .unwrap();
+    let week = local_days(
+        chrono::NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(),
+        chrono::NaiveDate::from_ymd_opt(2026, 10, 19).unwrap(),
+        chrono_tz::Europe::London,
+    );
+    let got = store.occurrences(&week, chrono_tz::Europe::London).unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].instance_id, "m_20261012T090000Z");
+    assert_eq!(got[0].start, When::At(at(13, 9, 0)));
+}
+
+#[test]
+fn cancelled_instance_before_its_master_in_the_same_page() {
+    let mut store = seeded();
+    let cancelled = json!({
+        "id": "m_20261012T090000Z", "status": "cancelled", "recurringEventId": "m",
+        "originalStartTime": {"dateTime": "2026-10-12T10:00:00+01:00", "timeZone": "Europe/London"}
+    });
+    store
+        .apply_events_page("acc", "cal", &[ev(cancelled), ev(weekly_master())], None)
+        .unwrap();
+    let days = local_days(
+        chrono::NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(),
+        chrono::NaiveDate::from_ymd_opt(2026, 10, 20).unwrap(),
+        chrono_tz::Europe::London,
+    );
+    let got = store.occurrences(&days, chrono_tz::Europe::London).unwrap();
+    let starts: Vec<_> = got.iter().map(|o| o.start).collect();
+    assert_eq!(starts, [When::At(at(19, 9, 0))]);
+}
