@@ -95,10 +95,7 @@ impl GoogleClient {
                     self.auth.refresh_if_stale(&token).await?;
                 }
                 Outcome::RefreshAndRetry => {
-                    return Err(GoogleError::Http {
-                        status: status.as_u16(),
-                        body,
-                    });
+                    return Err(GoogleError::http(status.as_u16(), body));
                 }
                 Outcome::Retry if attempt < self.retry.max_attempts => {
                     let wait = retry_after.unwrap_or_else(|| self.retry.delay(attempt));
@@ -106,10 +103,7 @@ impl GoogleClient {
                     tokio::time::sleep(wait).await;
                 }
                 Outcome::Retry if status.is_server_error() => {
-                    return Err(GoogleError::Http {
-                        status: status.as_u16(),
-                        body,
-                    });
+                    return Err(GoogleError::http(status.as_u16(), body));
                 }
                 Outcome::Retry => return Err(GoogleError::RateLimited),
                 Outcome::Fail(error) => return Err(error),
@@ -180,9 +174,6 @@ fn classify(status: StatusCode, body: &str) -> Outcome {
             }),
         },
         500..=599 => Outcome::Retry,
-        code => Outcome::Fail(GoogleError::Http {
-            status: code,
-            body: body.to_owned(),
-        }),
+        code => Outcome::Fail(GoogleError::http(code, body.to_owned())),
     }
 }

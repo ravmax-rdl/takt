@@ -388,10 +388,7 @@ async fn post_token_form(
 fn token_error(status: u16, body: &str) -> GoogleError {
     match serde_json::from_str::<TokenErrorBody>(body) {
         Ok(e) if e.error == "invalid_grant" => GoogleError::InvalidGrant,
-        _ => GoogleError::Http {
-            status,
-            body: body.to_owned(),
-        },
+        _ => GoogleError::http(status, body.to_owned()),
     }
 }
 
