@@ -69,6 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let mut calendar_id = None;
+    let mut calendar_tz = None;
     let mut page_token: Option<String> = None;
     loop {
         let page = client
@@ -80,6 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .find(|c| c.fields.display_name() == calendar_name)
         {
             calendar_id = Some(c.fields.id.clone());
+            calendar_tz = c.fields.time_zone.clone();
         }
         match page.next_page_token {
             Some(next) => page_token = Some(next),
@@ -125,6 +127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut fixture = json!({
             "name": name,
             "range": {"start": from.to_rfc3339(), "end": to.to_rfc3339()},
+            "calendarTimeZone": calendar_tz,
             "master": master.raw,
             "exceptions": exceptions,
             "instances": instances,
@@ -135,32 +138,66 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .chars()
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
             .collect();
-        let file = out.join(format!(
-            "{}-{}.json",
-            slug.trim_matches('-'),
-            &master.fields.id[..8.min(master.fields.id.len())]
-        ));
+        let id_part = master
+            .fields
+            .id
+            .replace(|c: char| !c.is_ascii_alphanumeric(), "_");
+        let file = out.join(format!("{}-{}.json", slug.trim_matches('-'), id_part));
         std::fs::write(&file, serde_json::to_string_pretty(&fixture)?)?;
         println!("wrote {}", file.display());
     }
     Ok(())
 }
 
-/// Replaces every email address with a stable placeholder and drops links
-/// that encode the calendar's address.
+/// Keys that survive scrubbing on masters, exceptions and instances.
+const ALLOWED: &[&str] = &[
+    "id",
+    "status",
+    "summary",
+    "start",
+    "end",
+    "recurrence",
+    "recurringEventId",
+    "originalStartTime",
+    "iCalUID",
+    "eventType",
+    "kind",
+];
+
+/// Keeps only allowlisted keys on every event; as a safety net, replaces any
+/// email address left anywhere with a stable placeholder.
 #[derive(Default)]
 struct Scrubber {
     emails: HashMap<String, String>,
 }
 
 impl Scrubber {
-    fn scrub(&mut self, value: &mut Value) {
+    fn scrub(&mut self, fixture: &mut Value) {
+        let Some(map) = fixture.as_object_mut() else {
+            return;
+        };
+        for key in ["master", "exceptions", "instances"] {
+            match map.get_mut(key) {
+                Some(Value::Array(events)) => events.iter_mut().for_each(|e| self.event(e)),
+                Some(event) => self.event(event),
+                None => {}
+            }
+        }
+    }
+
+    fn event(&mut self, event: &mut Value) {
+        if let Value::Object(map) = event {
+            map.retain(|key, _| ALLOWED.contains(&key.as_str()));
+        }
+        self.emails(event);
+    }
+
+    fn emails(&mut self, value: &mut Value) {
         match value {
             Value::Object(map) => {
-                map.remove("htmlLink");
                 for (key, v) in map.iter_mut() {
-                    if key == "email" {
-                        if let Value::String(email) = v {
+                    match v {
+                        Value::String(email) if key == "email" => {
                             let n = self.emails.len() + 1;
                             let placeholder = self
                                 .emails
@@ -168,12 +205,11 @@ impl Scrubber {
                                 .or_insert_with(|| format!("person{n}@example.com"));
                             *v = Value::String(placeholder.clone());
                         }
-                    } else {
-                        self.scrub(v);
+                        _ => self.emails(v),
                     }
                 }
             }
-            Value::Array(items) => items.iter_mut().for_each(|v| self.scrub(v)),
+            Value::Array(items) => items.iter_mut().for_each(|v| self.emails(v)),
             _ => {}
         }
     }

@@ -18,13 +18,14 @@ fn when(v: &Value) -> Option<When> {
         .map(|t| When::At(t.with_timezone(&Utc)))
 }
 
-fn master_from(v: &Value) -> Master {
+fn master_from(v: &Value, calendar_tz: Option<&str>) -> Master {
     Master {
         id: v["id"].as_str().unwrap().to_owned(),
         start: when(&v["start"]).unwrap(),
         end: when(&v["end"]).unwrap(),
         tz: v["start"]["timeZone"]
             .as_str()
+            .or(calendar_tz)
             .and_then(|n| n.parse().ok())
             .unwrap_or(chrono_tz::UTC),
         recurrence: v["recurrence"]
@@ -77,8 +78,16 @@ fn local_expansion_matches_google() {
 
     let mut failures = Vec::new();
     for file in files {
-        let fixture: Value =
-            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        let fixture: Value = match std::fs::read_to_string(&file)
+            .map_err(|e| e.to_string())
+            .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))
+        {
+            Ok(fixture) => fixture,
+            Err(e) => {
+                failures.push(format!("{}: cannot read fixture: {e}", file.display()));
+                continue;
+            }
+        };
         let range = Range {
             start: instant(&fixture["range"]["start"]),
             end: instant(&fixture["range"]["end"]),
@@ -90,15 +99,21 @@ fn local_expansion_matches_google() {
         };
         let keep = |start: &When| start.as_utc() >= inner.start && start.as_utc() < inner.end;
 
-        let master = master_from(&fixture["master"]);
+        let master = master_from(&fixture["master"], fixture["calendarTimeZone"].as_str());
         let exceptions: Vec<_> = fixture["exceptions"]
             .as_array()
             .unwrap()
             .iter()
             .filter_map(exception_from)
             .collect();
-        let mut ours: Vec<(String, When, When)> = expand(&master, &exceptions, &range)
-            .unwrap()
+        let expanded = match expand(&master, &exceptions, &range) {
+            Ok(expanded) => expanded,
+            Err(e) => {
+                failures.push(format!("{}: expansion failed: {e:?}", file.display()));
+                continue;
+            }
+        };
+        let mut ours: Vec<(String, When, When)> = expanded
             .into_iter()
             .filter(|o| keep(&o.start))
             .map(|o| (o.instance_id, o.start, o.end))
