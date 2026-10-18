@@ -57,15 +57,19 @@ impl Store {
             lo,
             hi,
         )? {
-            expanded.insert((
-                row.account_id.clone(),
-                row.calendar_id.clone(),
-                row.fields.id.clone(),
-            ));
-            self.expand_series(&row, &padded, &mut out)?;
+            // A series that cannot be expanded shows as one event; its moved
+            // instances still show on their own below.
+            if self.expand_series(&row, &padded, &mut out)? {
+                expanded.insert((
+                    row.account_id.clone(),
+                    row.calendar_id.clone(),
+                    row.fields.id.clone(),
+                ));
+            }
         }
 
-        // Exceptions moved somewhere their series does not reach in this range.
+        // Exceptions moved somewhere their series does not reach in this range,
+        // and those of a series that failed to expand.
         for row in self.rows(
             &format!(
                 "{VISIBLE} AND e.kind = 'exception' AND (e.status IS NULL OR e.status != 'cancelled')
@@ -89,16 +93,20 @@ impl Store {
                 .cmp(&display_instant(&b.start, tz))
                 .then_with(|| a.summary.cmp(&b.summary))
                 .then_with(|| a.account_id.cmp(&b.account_id))
+                .then_with(|| a.calendar_id.cmp(&b.calendar_id))
+                .then_with(|| a.instance_id.cmp(&b.instance_id))
         });
         Ok(out)
     }
 
+    /// Pushes the series' occurrences in `range`. False when it cannot be
+    /// expanded and was shown as a single event instead.
     fn expand_series(
         &self,
         master: &Row,
         range: &Range,
         out: &mut Vec<Occurrence>,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
         let exception_rows =
             self.exceptions_of(&master.account_id, &master.calendar_id, &master.fields.id)?;
         let exceptions: Vec<_> = exception_rows.iter().filter_map(exception_of).collect();
@@ -128,9 +136,10 @@ impl Store {
                         false,
                     ));
                 }
+                Ok(true)
             }
             Err(error) => {
-                tracing::warn!(event = %master.fields.id, %error, "showing series as a single event");
+                tracing::debug!(event = %master.fields.id, %error, "showing series as a single event");
                 let f = &master.fields;
                 if let (Some(start), Some(end)) = (
                     f.start.as_ref().and_then(when_of),
@@ -138,13 +147,13 @@ impl Store {
                 ) {
                     out.push(occurrence(master, &f.id, f.id.clone(), start, end, f, true));
                 }
+                Ok(false)
             }
         }
-        Ok(())
     }
 
     fn rows(&self, sql_tail: &str, lo: i64, hi: i64) -> Result<Vec<Row>, StoreError> {
-        let mut stmt = self.conn.prepare(&format!(
+        let mut stmt = self.conn.prepare_cached(&format!(
             "SELECT e.account_id, e.calendar_id, c.time_zone, e.raw_json {sql_tail}"
         ))?;
         let raw_rows = stmt.query_map(params![lo, hi], |row| {
@@ -175,7 +184,7 @@ impl Store {
         calendar_id: &str,
         master_id: &str,
     ) -> Result<Vec<EventFields>, StoreError> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT raw_json FROM events WHERE account_id = ?1 AND calendar_id = ?2 AND recurring_event_id = ?3",
         )?;
         let raws = stmt.query_map(params![account_id, calendar_id, master_id], |row| {

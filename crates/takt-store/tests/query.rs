@@ -68,12 +68,17 @@ fn unselected_or_hidden_calendars_are_excluded() {
     store
         .apply_events_page("acc", "hid", &[ev(e)], None)
         .unwrap();
-    assert!(
-        store
-            .occurrences(&week_of_19_oct(), Tz::UTC)
-            .unwrap()
-            .is_empty()
-    );
+    add(&mut store, "acc", json!({"id": "vis", "selected": true}));
+    let shown = json!({"id": "y", "start": {"dateTime": "2026-10-20T09:00:00Z"}, "end": {"dateTime": "2026-10-20T10:00:00Z"}});
+    store
+        .apply_events_page("acc", "vis", &[ev(shown)], None)
+        .unwrap();
+    let got = store.occurrences(&week_of_19_oct(), Tz::UTC).unwrap();
+    let ids: Vec<_> = got
+        .iter()
+        .map(|o| (o.calendar_id.as_str(), o.instance_id.as_str()))
+        .collect();
+    assert_eq!(ids, [("vis", "y")]);
 }
 
 fn series() -> serde_json::Value {
@@ -172,6 +177,68 @@ fn unparseable_series_shows_once_with_a_flag() {
         .unwrap();
     assert_eq!(got.len(), 1);
     assert!(got[0].recurrence_error);
+}
+
+#[test]
+fn exceptions_of_an_unparseable_series_still_show() {
+    let mut store = store_with("acc", visible());
+    let mut broken = series();
+    broken["recurrence"] = json!(["RRULE:FREQ=SOMETIMES"]);
+    broken["start"] = json!({"dateTime": "2026-10-20T10:00:00+01:00", "timeZone": "Europe/London"});
+    broken["end"] = json!({"dateTime": "2026-10-20T10:30:00+01:00", "timeZone": "Europe/London"});
+    let moved = json!({
+        "id": "m_20261027T100000Z", "summary": "1:1 (moved)", "recurringEventId": "m",
+        "originalStartTime": {"dateTime": "2026-10-27T10:00:00Z", "timeZone": "Europe/London"},
+        "start": {"dateTime": "2026-10-22T12:00:00Z"}, "end": {"dateTime": "2026-10-22T12:30:00Z"}
+    });
+    let cancelled = json!({
+        "id": "m_20261103T100000Z", "status": "cancelled", "recurringEventId": "m",
+        "originalStartTime": {"dateTime": "2026-10-21T10:00:00Z", "timeZone": "Europe/London"}
+    });
+    store
+        .apply_events_page("acc", "cal", &[ev(broken), ev(moved), ev(cancelled)], None)
+        .unwrap();
+    let got = store
+        .occurrences(&week_of_19_oct(), Tz::Europe__London)
+        .unwrap();
+    let ids: Vec<_> = got
+        .iter()
+        .map(|o| (o.instance_id.as_str(), o.recurrence_error))
+        .collect();
+    assert_eq!(ids, [("m", true), ("m_20261027T100000Z", false)]);
+}
+
+#[test]
+fn occurrences_are_sorted_by_start_then_summary() {
+    let mut store = store_with("acc", visible());
+    let timed = |id: &str, summary: &str| {
+        ev(json!({"id": id, "summary": summary,
+            "start": {"dateTime": "2026-10-20T09:00:00Z"}, "end": {"dateTime": "2026-10-20T10:00:00Z"}}))
+    };
+    let moved = json!({
+        "id": "m_20261019T090000Z", "summary": "1:1 (moved)", "recurringEventId": "m",
+        "originalStartTime": {"dateTime": "2026-10-19T10:00:00+01:00", "timeZone": "Europe/London"},
+        "start": {"dateTime": "2026-10-20T07:00:00Z"}, "end": {"dateTime": "2026-10-20T07:30:00Z"}
+    });
+    store
+        .apply_events_page(
+            "acc",
+            "cal",
+            &[
+                timed("b", "Beta"),
+                ev(series()),
+                timed("a", "Alpha"),
+                ev(moved),
+                all_day_on("2026-10-20"),
+            ],
+            None,
+        )
+        .unwrap();
+    let got = store
+        .occurrences(&week_of_19_oct(), Tz::Europe__London)
+        .unwrap();
+    let ids: Vec<_> = got.iter().map(|o| o.instance_id.as_str()).collect();
+    assert_eq!(ids, ["ad", "m_20261019T090000Z", "a", "b"]);
 }
 
 fn all_day_on(date: &str) -> Item<EventFields> {
