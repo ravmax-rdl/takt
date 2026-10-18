@@ -228,7 +228,15 @@ fn moved_exception_reports_its_original_slot() {
 
 #[test]
 fn minimal_cancelled_instance_lasts_as_long_as_its_series() {
-    let mut store = seeded();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("takt.db");
+    let mut store = Store::open(&path).unwrap();
+    store.upsert_account("acc", "me@example.com").unwrap();
+    let cal: Item<CalendarListEntry> = Item::from_value(
+        json!({"id": "cal", "summary": "Me", "selected": true, "timeZone": "Europe/London"}),
+    )
+    .unwrap();
+    store.apply_calendar_list_page("acc", &[cal], None).unwrap();
     store
         .apply_events_page("acc", "cal", &[ev(weekly_master())], None)
         .unwrap();
@@ -240,7 +248,18 @@ fn minimal_cancelled_instance_lasts_as_long_as_its_series() {
         .apply_events_page("acc", "cal", &[ev(cancelled.clone())], None)
         .unwrap();
     assert!(changes.affects(at(12, 9, 20), at(12, 9, 25)));
-    // Its stored span has the series' length too, so a later change reports all of it.
+    // The stored row keeps only what its raw JSON gives (end = start); a later change still
+    // reports the whole original slot because the series' length is looked up again.
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let (start, end): (Option<i64>, Option<i64>) = conn
+        .query_row(
+            "SELECT start_utc, end_utc FROM events WHERE event_id = 'm_20261012T090000Z'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert!(start.is_some());
+    assert_eq!(end, start);
     let changes = store
         .apply_events_page("acc", "cal", &[ev(cancelled)], None)
         .unwrap();

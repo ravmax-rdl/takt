@@ -62,15 +62,9 @@ impl Store {
                 )?;
                 continue;
             }
-            let mut index = EventIndex::of(f, fallback);
+            let index = EventIndex::of(f, fallback);
             if let (Some(series_id), Some(exception)) = (&f.recurring_event_id, exception_of(f)) {
                 let series = series_duration(&tx, account_id, calendar_id, series_id, items)?;
-                if f.end.is_none()
-                    && let (Some(start), Some(length)) = (index.start_utc, series)
-                {
-                    // A minimal cancelled instance has no times of its own; give it the series' length.
-                    index.end_utc = Some(start + length);
-                }
                 let own = index.start_utc.zip(index.end_utc).map(|(s, e)| e - s);
                 let length = series.or(own).unwrap_or(0);
                 // The slot the instance moved out of (or was cancelled from) changes too.
