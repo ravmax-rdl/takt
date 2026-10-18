@@ -143,10 +143,12 @@ pub fn expand(
     Ok(out)
 }
 
-/// End of the series' last occurrence, or `None` when it never ends (or has
-/// more than [`MAX_OCCURRENCES`] occurrences, which callers treat the same way).
+/// End of the series' last occurrence, or `None` when it never ends, has
+/// [`MAX_OCCURRENCES`] or more occurrences, or iteration hit the `rrule`
+/// loop limit (callers treat all of these the same way).
 pub fn series_end(master: &Master) -> Result<Option<When>, RecurError> {
     let all_day = series_kind(master)?;
+    let set = parse_set(master, all_day)?;
     let bounded = master
         .recurrence
         .iter()
@@ -157,7 +159,7 @@ pub fn series_end(master: &Master) -> Result<Option<When>, RecurError> {
         return Ok(None);
     }
     let duration = master.end.as_utc() - master.start.as_utc();
-    let result = parse_set(master, all_day)?.all(MAX_OCCURRENCES);
+    let result = set.all(MAX_OCCURRENCES);
     if result.limited {
         return Ok(None);
     }

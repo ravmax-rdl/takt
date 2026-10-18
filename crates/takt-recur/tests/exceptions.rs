@@ -158,3 +158,53 @@ fn series_end_for_all_day_until() {
     };
     assert_eq!(series_end(&m), Ok(Some(day("2026-10-20"))));
 }
+
+#[test]
+fn series_end_errors_on_unparseable_unbounded_rule() {
+    let mut m = weekly();
+    m.recurrence = vec!["RRULE:FREQ=SOMETIMES".into()];
+    assert!(matches!(series_end(&m), Err(RecurError::Parse(_))));
+}
+
+#[test]
+fn series_end_is_none_past_cap() {
+    let m = Master {
+        id: "d".into(),
+        start: at("2000-01-01T09:00:00Z"),
+        end: at("2000-01-01T09:30:00Z"),
+        tz: chrono_tz::UTC,
+        recurrence: vec!["RRULE:FREQ=DAILY;UNTIL=21000101T000000Z".into()],
+    };
+    assert_eq!(series_end(&m), Ok(None));
+}
+
+#[test]
+fn all_day_exceptions_cancel_and_move_instances() {
+    // Mondays 5, 12, 19, 26 October 2026, all day.
+    let m = Master {
+        id: "a".into(),
+        start: day("2026-10-05"),
+        end: day("2026-10-06"),
+        tz: chrono_tz::UTC,
+        recurrence: vec!["RRULE:FREQ=WEEKLY;COUNT=4".into()],
+    };
+    let cancelled = Exception {
+        id: "a_20261012".into(),
+        original_start: day("2026-10-12"),
+        cancelled: true,
+        start: day("2026-10-12"),
+        end: day("2026-10-13"),
+    };
+    let moved = Exception {
+        id: "a_20261019".into(),
+        original_start: day("2026-10-19"),
+        cancelled: false,
+        start: day("2026-10-21"),
+        end: day("2026-10-22"),
+    };
+    let got = expand(&m, &[cancelled, moved], &october()).unwrap();
+    let ids: Vec<_> = got.iter().map(|o| o.instance_id.as_str()).collect();
+    assert_eq!(ids, ["a_20261005", "a_20261019", "a_20261026"]);
+    assert_eq!(got[1].start, day("2026-10-21"));
+    assert_eq!(got[1].source, Source::Exception);
+}
