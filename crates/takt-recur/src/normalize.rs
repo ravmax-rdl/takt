@@ -1,32 +1,45 @@
 //! Rewrites Google's recurrence lines into the RFC 5545 text `rrule` accepts.
 
-use chrono::{NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, LocalResult, NaiveDate, NaiveDateTime, Offset, TimeDelta, TimeZone, Utc};
 use chrono_tz::Tz;
 
 use crate::{Master, When};
 
-/// A DTSTART line built from the series' first event, followed by its
-/// recurrence lines with UNTIL, EXDATE and RDATE values made explicit.
-pub(crate) fn rruleset_text(master: &Master, all_day: bool) -> String {
-    let mut lines = vec![dtstart_line(master)];
-    lines.extend(
-        master
-            .recurrence
-            .iter()
-            .map(|line| normalize_line(line.trim(), all_day, master.tz)),
-    );
-    lines.join("\n")
+/// The series' recurrence lines with UNTIL, EXDATE and RDATE values made
+/// explicit. The start goes to `rrule` separately (see [`rule_start`]).
+pub(crate) fn recurrence_text(master: &Master, all_day: bool) -> String {
+    master
+        .recurrence
+        .iter()
+        .map(|line| normalize_line(line.trim(), all_day, master.tz))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-fn dtstart_line(master: &Master) -> String {
+/// The instant `rrule` starts the series from.
+///
+/// `rrule` rejects a DTSTART whose local time is ambiguous, and when handed
+/// the later of the two instants it generates the earlier one and then drops
+/// it as being before the start. So a start in the repeated hour of a
+/// fall-back is given to `rrule` as the earlier instant, which `rrule`
+/// generates (and counts) as the first occurrence. The caller maps that one
+/// occurrence back to the master's real start.
+pub(crate) fn rule_start(master: &Master) -> DateTime<rrule::Tz> {
     match master.start {
-        When::At(t) => format!(
-            "DTSTART;TZID={}:{}",
-            master.tz.name(),
-            t.with_timezone(&master.tz).format("%Y%m%dT%H%M%S")
-        ),
+        When::At(t) => {
+            let local = t.with_timezone(&master.tz).naive_local();
+            let start = match master.tz.from_local_datetime(&local) {
+                LocalResult::Ambiguous(earlier, _) => earlier.with_timezone(&Utc),
+                _ => t,
+            };
+            start.with_timezone(&rrule::Tz::Tz(master.tz))
+        }
         // All-day series run in UTC so generated instants map straight back to dates.
-        When::Date(d) => format!("DTSTART:{}T000000Z", d.format("%Y%m%d")),
+        When::Date(d) => d
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight exists")
+            .and_utc()
+            .with_timezone(&rrule::Tz::UTC),
     }
 }
 
@@ -45,6 +58,8 @@ fn normalize_line(line: &str, all_day: bool, tz: Tz) -> String {
             let values: Vec<&str> = value.split(',').map(str::trim).collect();
             if values.iter().all(|v| is_date(v)) {
                 let stamps: Vec<String> = values.iter().map(|v| format!("{v}T000000Z")).collect();
+                format!("{name}:{}", stamps.join(","))
+            } else if let Some(stamps) = unambiguous_stamps(head, &values) {
                 format!("{name}:{}", stamps.join(","))
             } else {
                 line.to_string()
@@ -89,13 +104,47 @@ fn until_value(value: &str, all_day: bool, tz: Tz) -> String {
     value.to_string()
 }
 
+/// `rrule` rejects TZID values that fall in a DST gap or overlap. When a
+/// line has any, all its values are rewritten as UTC; other lines are left
+/// alone.
+fn unambiguous_stamps(head: &str, values: &[&str]) -> Option<Vec<String>> {
+    let tz: Tz = head
+        .split(';')
+        .skip(1)
+        .find_map(|param| {
+            let (key, value) = param.split_once('=')?;
+            key.eq_ignore_ascii_case("TZID").then_some(value)
+        })?
+        .parse()
+        .ok()?;
+    let locals = values
+        .iter()
+        .map(|v| NaiveDateTime::parse_from_str(v, "%Y%m%dT%H%M%S").ok())
+        .collect::<Option<Vec<_>>>()?;
+    locals
+        .iter()
+        .any(|local| !matches!(tz.from_local_datetime(local), LocalResult::Single(_)))
+        .then(|| locals.iter().map(|local| utc_stamp(*local, tz)).collect())
+}
+
 fn utc_stamp(local: NaiveDateTime, tz: Tz) -> String {
-    let utc = tz
-        .from_local_datetime(&local)
-        .earliest()
-        .map(|t| t.with_timezone(&Utc))
-        .unwrap_or_else(|| local.and_utc());
-    utc.format("%Y%m%dT%H%M%SZ").to_string()
+    local_to_utc(local, tz).format("%Y%m%dT%H%M%SZ").to_string()
+}
+
+/// RFC 5545 3.3.5: a repeated local time means its first occurrence, and a
+/// skipped one is read with the UTC offset in force before the gap.
+fn local_to_utc(local: NaiveDateTime, tz: Tz) -> DateTime<Utc> {
+    match tz.from_local_datetime(&local) {
+        LocalResult::Single(t) | LocalResult::Ambiguous(t, _) => t.with_timezone(&Utc),
+        LocalResult::None => {
+            // Gaps last at most a day and transitions are months apart, so the
+            // offset two days earlier is the one before the gap.
+            let before = tz
+                .offset_from_utc_datetime(&(local - TimeDelta::days(2)))
+                .fix();
+            (local - before).and_utc()
+        }
+    }
 }
 
 fn is_date(value: &str) -> bool {
@@ -135,6 +184,42 @@ mod tests {
                 chrono_tz::Europe::London
             ),
             "RRULE:FREQ=WEEKLY;UNTIL=20261012T080000Z"
+        );
+    }
+
+    #[test]
+    fn repeated_local_exdate_becomes_utc_first_occurrence() {
+        assert_eq!(
+            normalize_line(
+                "EXDATE;TZID=Europe/Berlin:20181027T020000,20181028T020000",
+                false,
+                chrono_tz::Europe::Berlin
+            ),
+            "EXDATE:20181027T000000Z,20181028T000000Z"
+        );
+    }
+
+    #[test]
+    fn skipped_local_rdate_uses_offset_before_gap() {
+        assert_eq!(
+            normalize_line(
+                "RDATE;TZID=Europe/Berlin:20190331T023000",
+                false,
+                chrono_tz::Europe::Berlin
+            ),
+            "RDATE:20190331T013000Z"
+        );
+    }
+
+    #[test]
+    fn skipped_floating_until_uses_offset_before_gap() {
+        assert_eq!(
+            normalize_line(
+                "RRULE:FREQ=DAILY;UNTIL=20190331T023000",
+                false,
+                chrono_tz::Europe::Berlin
+            ),
+            "RRULE:FREQ=DAILY;UNTIL=20190331T013000Z"
         );
     }
 

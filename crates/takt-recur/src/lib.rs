@@ -106,8 +106,8 @@ pub fn expand(
 ) -> Result<Vec<Occurrence>, RecurError> {
     let all_day = series_kind(master)?;
     let duration = master.end.as_utc() - master.start.as_utc();
-    let set = parse_set(master, all_day)?;
-    let after = to_rrule_tz(range.start - duration - TimeDelta::seconds(1));
+    let (set, start) = parse_set(master, all_day)?;
+    let after = to_rrule_tz(range.start - duration - start.lead() - TimeDelta::seconds(1));
     let before = to_rrule_tz(range.end);
     let mut out: Vec<Occurrence> = set
         .after(after)
@@ -115,7 +115,8 @@ pub fn expand(
         .all(MAX_OCCURRENCES)
         .dates
         .into_iter()
-        .map(|dt| original_of(dt.with_timezone(&Utc), all_day))
+        .filter_map(|dt| start.actual(dt))
+        .map(|t| original_of(t, all_day))
         // Any exception, cancelled or moved, replaces the generated occurrence.
         .filter(|original| !exceptions.iter().any(|e| e.original_start == *original))
         .map(|original| Occurrence {
@@ -148,7 +149,7 @@ pub fn expand(
 /// loop limit (callers treat all of these the same way).
 pub fn series_end(master: &Master) -> Result<Option<When>, RecurError> {
     let all_day = series_kind(master)?;
-    let set = parse_set(master, all_day)?;
+    let (set, start) = parse_set(master, all_day)?;
     let bounded = master
         .recurrence
         .iter()
@@ -163,8 +164,13 @@ pub fn series_end(master: &Master) -> Result<Option<When>, RecurError> {
     if result.limited {
         return Ok(None);
     }
-    Ok(Some(match result.dates.last() {
-        Some(dt) => shift(&original_of(dt.with_timezone(&Utc), all_day), duration),
+    let last = result
+        .dates
+        .into_iter()
+        .rev()
+        .find_map(|dt| start.actual(dt));
+    Ok(Some(match last {
+        Some(t) => shift(&original_of(t, all_day), duration),
         None => master.end,
     }))
 }
@@ -177,10 +183,52 @@ fn series_kind(master: &Master) -> Result<bool, RecurError> {
     }
 }
 
-fn parse_set(master: &Master, all_day: bool) -> Result<rrule::RRuleSet, RecurError> {
-    normalize::rruleset_text(master, all_day)
-        .parse::<rrule::RRuleSet>()
-        .map_err(|e| RecurError::Parse(e.to_string()))
+/// Where `rrule` starts the series versus where the master really starts.
+/// They differ only for a start in the repeated hour of a DST fall-back (see
+/// [`normalize::rule_start`]).
+#[derive(Clone, Copy)]
+struct Start {
+    rule: DateTime<Utc>,
+    real: DateTime<Utc>,
+    /// An EXDATE names the real start, which `rrule` cannot match itself.
+    real_excluded: bool,
+}
+
+impl Start {
+    /// How far the `rrule` start sits before the real one.
+    fn lead(&self) -> TimeDelta {
+        self.real - self.rule
+    }
+
+    /// The occurrence an `rrule` date stands for, or `None` when excluded.
+    fn actual(&self, dt: DateTime<rrule::Tz>) -> Option<DateTime<Utc>> {
+        let t = dt.with_timezone(&Utc);
+        if t != self.rule {
+            Some(t)
+        } else if self.real_excluded {
+            None
+        } else {
+            Some(self.real)
+        }
+    }
+}
+
+fn parse_set(master: &Master, all_day: bool) -> Result<(rrule::RRuleSet, Start), RecurError> {
+    let rule_start = normalize::rule_start(master);
+    let set = rrule::RRuleSet::new(rule_start)
+        .set_from_string(&normalize::recurrence_text(master, all_day))
+        .map_err(|e| RecurError::Parse(e.to_string()))?;
+    let rule = rule_start.with_timezone(&Utc);
+    let real = master.start.as_utc();
+    let real_excluded = rule != real && set.get_exdate().iter().any(|d| *d == real);
+    Ok((
+        set,
+        Start {
+            rule,
+            real,
+            real_excluded,
+        },
+    ))
 }
 
 fn to_rrule_tz(t: DateTime<Utc>) -> DateTime<rrule::Tz> {
