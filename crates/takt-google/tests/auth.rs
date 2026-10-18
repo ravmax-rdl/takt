@@ -132,6 +132,37 @@ async fn sign_in_round_trip() {
     assert_eq!(signed.access_token, "at");
 }
 
+#[test]
+fn debug_output_redacts_secrets() {
+    let signed_in = SignedIn {
+        sub: "sub-1".into(),
+        email: "me@example.com".into(),
+        refresh_token: "RT-SECRET-111".into(),
+        access_token: "AT-SECRET-222".into(),
+        expires_in: 3599,
+    };
+    let client = OAuthClient {
+        client_id: "cid".into(),
+        client_secret: "CLIENT-SECRET-333".into(),
+    };
+    let pkce = Pkce::from_verifier("VERIFIER-SECRET-444");
+    let redirect = Redirect::Code {
+        code: "CODE-SECRET-555".into(),
+        state: "st".into(),
+    };
+    let auth = Auth::new(
+        reqwest::Client::new(),
+        Endpoints::google().token,
+        client.clone(),
+        "RT-SECRET-666",
+    )
+    .with_access_token("AT-SECRET-777", Duration::from_secs(60));
+    let all = format!("{signed_in:?} {client:?} {pkce:?} {redirect:?} {auth:?}");
+    assert!(!all.contains("SECRET"), "{all}");
+    assert!(all.contains("<redacted>"));
+    assert!(all.contains("me@example.com"));
+}
+
 #[tokio::test]
 async fn sign_in_rejects_state_mismatch() {
     let server = MockServer::start().await;

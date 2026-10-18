@@ -1,6 +1,7 @@
 //! Google OAuth for installed apps: PKCE, a loopback redirect, and refresh.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -24,16 +25,34 @@ pub const SCOPES: &[&str] = &[
 const REFRESH_MARGIN: Duration = Duration::from_secs(60);
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct OAuthClient {
     pub client_id: String,
     pub client_secret: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Pkce {
     pub verifier: String,
     pub challenge: String,
+}
+
+impl fmt::Debug for OAuthClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OAuthClient")
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"<redacted>")
+            .finish()
+    }
+}
+
+impl fmt::Debug for Pkce {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Pkce")
+            .field("verifier", &"<redacted>")
+            .field("challenge", &self.challenge)
+            .finish()
+    }
 }
 
 impl Pkce {
@@ -73,11 +92,25 @@ pub fn authorization_url(
     url
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Redirect {
     Code { code: String, state: String },
     Denied(String),
     Other,
+}
+
+impl fmt::Debug for Redirect {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Redirect::Code { state, .. } => f
+                .debug_struct("Code")
+                .field("code", &"<redacted>")
+                .field("state", state)
+                .finish(),
+            Redirect::Denied(reason) => f.debug_tuple("Denied").field(reason).finish(),
+            Redirect::Other => f.write_str("Other"),
+        }
+    }
 }
 
 /// Reads the request line of the browser's redirect, e.g. `GET /?code=..&state=.. HTTP/1.1`.
@@ -122,13 +155,25 @@ pub fn decode_id_token(jwt: &str) -> Result<IdClaims, GoogleError> {
         .map_err(|e| GoogleError::AuthFlow(format!("id_token claims: {e}")))
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SignedIn {
     pub sub: String,
     pub email: String,
     pub refresh_token: String,
     pub access_token: String,
     pub expires_in: u64,
+}
+
+impl fmt::Debug for SignedIn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SignedIn")
+            .field("sub", &self.sub)
+            .field("email", &self.email)
+            .field("refresh_token", &"<redacted>")
+            .field("access_token", &"<redacted>")
+            .field("expires_in", &self.expires_in)
+            .finish()
+    }
 }
 
 #[derive(Deserialize)]
@@ -321,6 +366,16 @@ pub struct Auth {
     client: OAuthClient,
     refresh_token: String,
     cache: Mutex<Option<(String, Instant)>>,
+}
+
+impl fmt::Debug for Auth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Auth")
+            .field("client", &self.client)
+            .field("refresh_token", &"<redacted>")
+            .field("cache", &"<redacted>")
+            .finish_non_exhaustive()
+    }
 }
 
 impl Auth {
