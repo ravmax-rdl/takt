@@ -18,7 +18,13 @@ pub struct Item<T> {
 
 impl<T: DeserializeOwned> Item<T> {
     pub fn from_value(raw: Value) -> Result<Self, GoogleError> {
-        let fields = T::deserialize(&raw).map_err(|e| GoogleError::Decode(e.to_string()))?;
+        let fields = T::deserialize(&raw).map_err(|e| {
+            let id = raw.get("id").and_then(Value::as_str);
+            match id {
+                Some(id) => GoogleError::Decode(format!("item {id}: {e}")),
+                None => GoogleError::Decode(e.to_string()),
+            }
+        })?;
         Ok(Self { fields, raw })
     }
 }

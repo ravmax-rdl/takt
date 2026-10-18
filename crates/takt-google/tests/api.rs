@@ -30,6 +30,7 @@ async fn calendar_list_sends_sync_token_and_shows_hidden() {
         .and(query_param("syncToken", "cl1"))
         .and(query_param("showHidden", "true"))
         .and(query_param("showDeleted", "true"))
+        .and(query_param("maxResults", "250"))
         .respond_with(ok(
             json!({"items": [{"id": "me@example.com", "deleted": true}], "nextSyncToken": "cl2"}),
         ))
@@ -53,7 +54,10 @@ async fn events_page_follows_page_tokens() {
         .and(query_param("showDeleted", "true"))
         .and(query_param("maxResults", "2500"))
         .and(query_param_is_missing("singleEvents"))
+        .and(query_param_is_missing("timeMin"))
+        .and(query_param("syncToken", "s0"))
         .respond_with(ok(json!({"items": [{"id": "e1"}], "nextPageToken": "p2"})))
+        .expect(1)
         .mount(&server)
         .await;
     Mock::given(method("GET"))
@@ -61,6 +65,7 @@ async fn events_page_follows_page_tokens() {
         .and(query_param("pageToken", "p2"))
         .and(query_param("syncToken", "s0"))
         .respond_with(ok(json!({"items": [{"id": "e2"}], "nextSyncToken": "s1"})))
+        .expect(1)
         .mount(&server)
         .await;
     let client = client_at(&server);
@@ -93,6 +98,26 @@ async fn events_page_percent_encodes_calendar_id() {
         .await
         .unwrap();
     assert!(page.items.is_empty());
+}
+
+#[tokio::test]
+async fn events_page_encodes_slash_space_and_hash_in_calendar_id() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/calendar/v3/calendars/a%2Fb%20c%23d/events"))
+        .respond_with(ok(json!({"items": [], "nextSyncToken": "s"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    client_at(&server)
+        .events_page("a/b c#d", None, None)
+        .await
+        .unwrap();
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(
+        requests[0].url.path(),
+        "/calendar/v3/calendars/a%2Fb%20c%23d/events"
+    );
 }
 
 #[tokio::test]
@@ -138,6 +163,7 @@ async fn task_lists_collects_all_pages() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/tasks/v1/users/@me/lists"))
+        .and(query_param("maxResults", "100"))
         .and(query_param_is_missing("pageToken"))
         .respond_with(ok(
             json!({"items": [{"id": "L1", "title": "My Tasks"}], "nextPageToken": "n"}),
@@ -163,6 +189,7 @@ async fn tasks_page_sends_updated_min_and_flags() {
         .and(query_param("showCompleted", "true"))
         .and(query_param("showDeleted", "true"))
         .and(query_param("showHidden", "true"))
+        .and(query_param("maxResults", "100"))
         .respond_with(ok(json!({"items": [{"id": "t1", "title": "Pay rent"}]})))
         .expect(1)
         .mount(&server)
@@ -173,4 +200,25 @@ async fn tasks_page_sends_updated_min_and_flags() {
         .await
         .unwrap();
     assert_eq!(page.items[0].fields.title.as_deref(), Some("Pay rent"));
+}
+
+#[tokio::test]
+async fn instances_collects_all_pages() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/calendar/v3/calendars/cal/events/m/instances"))
+        .and(query_param("timeMin", "2026-01-01T00:00:00Z"))
+        .and(query_param("timeMax", "2027-01-01T00:00:00Z"))
+        .and(query_param_is_missing("pageToken"))
+        .respond_with(ok(json!({"items": [{"id": "m_1"}], "nextPageToken": "n"})))
+        .mount(&server).await;
+    Mock::given(method("GET"))
+        .and(path("/calendar/v3/calendars/cal/events/m/instances"))
+        .and(query_param("pageToken", "n"))
+        .respond_with(ok(json!({"items": [{"id": "m_2"}]})))
+        .mount(&server).await;
+    let from = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    let to = Utc.with_ymd_and_hms(2027, 1, 1, 0, 0, 0).unwrap();
+    let got = client_at(&server).instances("cal", "m", from, to).await.unwrap();
+    assert_eq!(got.len(), 2);
 }

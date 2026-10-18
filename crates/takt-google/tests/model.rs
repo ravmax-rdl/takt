@@ -129,3 +129,35 @@ fn missing_id_is_a_decode_error() {
     let err = Item::<EventFields>::from_value(json!({"summary": "no id"})).unwrap_err();
     assert!(matches!(err, GoogleError::Decode(_)));
 }
+
+#[test]
+fn cancelled_stub_without_recurring_id_parses() {
+    let item = Item::<EventFields>::from_value(json!({"id": "m", "status": "cancelled"})).unwrap();
+    assert!(item.fields.is_cancelled());
+    assert_eq!(item.fields.recurring_event_id, None);
+}
+
+#[test]
+fn page_item_raw_keeps_google_key_order() {
+    let body: serde_json::Value = serde_json::from_str(
+        r#"{"items": [{"summary": "s", "id": "e1", "start": {"timeZone": "UTC", "date": "2026-10-20"}, "etag": "x", "a": 1}]}"#,
+    )
+    .unwrap();
+    let page = Page::<EventFields>::from_value(body).unwrap();
+    assert_eq!(
+        serde_json::to_string(&page.items[0].raw).unwrap(),
+        r#"{"summary":"s","id":"e1","start":{"timeZone":"UTC","date":"2026-10-20"},"etag":"x","a":1}"#
+    );
+}
+
+#[test]
+fn decode_failure_names_the_item() {
+    let err = Page::<EventFields>::from_value(json!({"items": [
+        {"id": "ok"}, {"id": "bad-one", "start": {"dateTime": "not a date"}}
+    ]}))
+    .unwrap_err();
+    assert!(
+        matches!(&err, GoogleError::Decode(m) if m.contains("bad-one")),
+        "{err}"
+    );
+}
