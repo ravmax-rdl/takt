@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 use reqwest::{StatusCode, Url};
 use serde_json::Value;
@@ -81,7 +82,8 @@ impl GoogleClient {
                 .await
                 .map_err(GoogleError::from_reqwest)?;
             let status = response.status();
-            let retry_after = retry_after(response.headers());
+            let retry_after =
+                retry_after(response.headers()).map(|wait| wait.min(self.retry.max_delay));
             let body = response.text().await.map_err(GoogleError::from_reqwest)?;
             if status.is_success() {
                 return serde_json::from_str(&body).map_err(|e| GoogleError::Decode(e.to_string()));
@@ -116,23 +118,53 @@ impl GoogleClient {
     }
 }
 
+/// `Retry-After` is either delay-seconds or an HTTP-date (RFC 9110 5.6.7).
 fn retry_after(headers: &HeaderMap) -> Option<Duration> {
-    let seconds = headers
-        .get(RETRY_AFTER)?
-        .to_str()
-        .ok()?
-        .trim()
-        .parse::<u64>()
-        .ok()?;
-    Some(Duration::from_secs(seconds))
+    let value = headers.get(RETRY_AFTER)?.to_str().ok()?.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let date = DateTime::parse_from_rfc2822(value).ok()?;
+    Some(
+        (date.with_timezone(&Utc) - Utc::now())
+            .to_std()
+            .unwrap_or_default(),
+    )
 }
 
+const RATE_LIMIT_REASONS: &[&str] = &["rateLimitExceeded", "userRateLimitExceeded"];
+
+/// The reason that decides how a 403 is handled: a rate-limit reason anywhere
+/// in the body wins, otherwise the first reason Google gave.
 fn error_reason(body: &str) -> Option<String> {
     let value: Value = serde_json::from_str(body).ok()?;
-    value
-        .pointer("/error/errors/0/reason")?
-        .as_str()
-        .map(str::to_owned)
+    let reasons = |pointer: &str| -> Vec<String> {
+        value
+            .pointer(pointer)
+            .and_then(Value::as_array)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|e| e.get("reason")?.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let errors = reasons("/error/errors");
+    let details = reasons("/error/details");
+    if let Some(reason) = errors
+        .iter()
+        .find(|r| RATE_LIMIT_REASONS.contains(&r.as_str()))
+    {
+        return Some(reason.clone());
+    }
+    if details.iter().any(|r| r == "RATE_LIMIT_EXCEEDED") {
+        return Some("rateLimitExceeded".to_owned());
+    }
+    errors
+        .into_iter()
+        .next()
+        .or_else(|| details.into_iter().next())
 }
 
 fn classify(status: StatusCode, body: &str) -> Outcome {

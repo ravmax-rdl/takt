@@ -24,6 +24,16 @@ pub enum GoogleError {
 
 impl GoogleError {
     pub(crate) fn from_reqwest(error: reqwest::Error) -> Self {
-        GoogleError::Network(error.to_string())
+        // The URL can carry query tokens (sync/page tokens), so drop it, and
+        // keep the underlying causes (DNS, TLS, refused) that `Display` hides.
+        let error = error.without_url();
+        let mut message = error.to_string();
+        let mut source = std::error::Error::source(&error);
+        while let Some(cause) = source {
+            message.push_str(": ");
+            message.push_str(&cause.to_string());
+            source = cause.source();
+        }
+        GoogleError::Network(message)
     }
 }
