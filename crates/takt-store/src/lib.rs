@@ -8,6 +8,7 @@ mod convert;
 mod error;
 mod events;
 mod query;
+mod tasks;
 mod types;
 
 use std::path::Path;

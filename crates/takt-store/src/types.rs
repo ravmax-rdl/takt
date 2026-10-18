@@ -108,7 +108,6 @@ impl ChangeSet {
         }
     }
 
-    #[expect(dead_code, reason = "used by the tasks module in a later task")]
     pub(crate) fn touch_task_list(&mut self, list_id: &str, span: Option<TimeSpan>) {
         self.task_lists.insert(list_id.to_owned());
         match span {
