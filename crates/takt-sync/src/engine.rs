@@ -72,11 +72,14 @@ impl AccountEngine {
             .filter(|c| !c.hidden)
             .map(|c| c.calendar_id)
             .collect();
-        let results: Vec<Result<(), SyncError>> =
-            stream::iter(calendars.iter().map(|id| self.sync_calendar(id)))
-                .buffer_unordered(PARALLEL_CALENDARS)
-                .collect()
-                .await;
+        let pending: Vec<futures::future::BoxFuture<'_, Result<(), SyncError>>> = calendars
+            .iter()
+            .map(|id| Box::pin(self.sync_calendar(id)) as _)
+            .collect();
+        let results: Vec<Result<(), SyncError>> = stream::iter(pending)
+            .buffer_unordered(PARALLEL_CALENDARS)
+            .collect()
+            .await;
         results.into_iter().collect::<Result<(), _>>()?;
         self.sync_tasks().await
     }
