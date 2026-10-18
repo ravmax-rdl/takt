@@ -50,7 +50,7 @@ crates/takt-recur/
   tests/exceptions.rs                       exceptions, caps, errors, series_end
   tests/properties.rs                       proptest invariants
   tests/golden.rs                           local expansion == Google's events.instances
-  tests/fixtures/*.json                     captured series (Task 15)
+  tests/fixtures/*.json                     captured series (Task 14)
 crates/takt-google/
   src/lib.rs                                module wiring, Endpoints
   src/error.rs                              GoogleError
@@ -59,7 +59,7 @@ crates/takt-google/
   src/token_store.rs                        TokenStore, KeyringTokenStore, MemoryTokenStore
   src/client.rs                             GoogleClient core: bearer auth, retries, error classification
   src/api.rs                                endpoint methods
-  examples/capture.rs                       fixture capture tool (Task 15)
+  examples/capture.rs                       fixture capture tool (Task 14)
   tests/{model,auth,client,api}.rs
 crates/takt-store/
   migrations/001_init.sql                   schema
