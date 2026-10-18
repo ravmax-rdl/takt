@@ -24,6 +24,8 @@ pub struct MainView {
     list: Entity<ListState<AgendaDelegate>>,
     commands: Sender<Command>,
     detail: Option<DetailContent>,
+    /// The row `detail` was opened from.
+    detail_key: Option<RowKey>,
     show_raw: bool,
     /// The read behind the detail being opened; a newer open replaces (cancels) it.
     detail_load: Option<Task<()>>,
@@ -99,6 +101,7 @@ impl MainView {
             list,
             commands,
             detail: None,
+            detail_key: None,
             show_raw: false,
             detail_load: None,
             _subscriptions: subscriptions,
@@ -113,7 +116,19 @@ impl MainView {
     /// Copies new sections into the list and keeps the same row, on the same
     /// day, selected.
     fn refresh_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let sections = self.model.read(cx).snapshot.sections.clone();
+        let snapshot = &self.model.read(cx).snapshot;
+        let sections = snapshot.sections.clone();
+        let account_gone = |key: &RowKey| match key {
+            RowKey::Event { account_id, .. } | RowKey::Task { account_id, .. } => !snapshot
+                .accounts
+                .iter()
+                .any(|a| &a.account_id == account_id),
+        };
+        if self.detail_key.as_ref().is_some_and(account_gone) {
+            self.detail_load = None;
+            self.detail = None;
+            self.detail_key = None;
+        }
         self.list.update(cx, |list, cx| {
             let selected = list.selected_index().and_then(|ix| {
                 let delegate = list.delegate();
@@ -126,11 +141,10 @@ impl MainView {
         });
     }
 
-    fn on_list_event(&mut self, event: &ListEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_list_event(&mut self, event: &ListEvent, _: &mut Window, cx: &mut Context<Self>) {
         match event {
             ListEvent::Confirm(ix) => self.open_detail(*ix, cx),
-            ListEvent::Cancel => self.close_detail(&CloseDetail, window, cx),
-            ListEvent::Select(_) => {}
+            ListEvent::Cancel | ListEvent::Select(_) => {}
         }
     }
 
@@ -149,6 +163,7 @@ impl MainView {
         match row.key.clone() {
             RowKey::Task { .. } => {
                 self.detail_load = None;
+                self.detail_key = Some(row.key.clone());
                 self.detail = Some(DetailContent::Task {
                     title: row.title.clone(),
                     when,
@@ -164,6 +179,7 @@ impl MainView {
                 event_id,
                 ..
             } => {
+                let key = row.key.clone();
                 let model = self.model.read(cx);
                 let db = model.db().to_path_buf();
                 let calendar = model
@@ -196,10 +212,18 @@ impl MainView {
                                 view.detail = Some(DetailContent::Event(Box::new(
                                     crate::detail::event_detail(&raw, when, calendar, account),
                                 )));
+                                view.detail_key = Some(key);
                                 view.show_raw = false;
                             }
-                            Ok(None) => view.detail = None,
-                            Err(error) => tracing::error!(%error, "cannot read event details"),
+                            Ok(None) => {
+                                view.detail = None;
+                                view.detail_key = None;
+                            }
+                            Err(error) => {
+                                tracing::error!(%error, "cannot read event details");
+                                view.detail = None;
+                                view.detail_key = None;
+                            }
                         }
                         cx.notify();
                     });
@@ -211,6 +235,7 @@ impl MainView {
     fn close_detail(&mut self, _: &CloseDetail, _: &mut Window, cx: &mut Context<Self>) {
         self.detail_load = None;
         self.detail = None;
+        self.detail_key = None;
         cx.notify();
     }
 
@@ -460,6 +485,62 @@ mod tests {
         let (_dir, window, _view, commands) = open_with_selected_event(cx);
         press(window, "secondary-r", cx);
         assert_eq!(commands.try_recv(), Ok(Command::SyncNow));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[gpui_kit::test]
+    fn ctrl_r_asks_sync_to_run_now(cx: &mut TestAppContext) {
+        let (_dir, window, _view, commands) = open_with_selected_event(cx);
+        press(window, "ctrl-r", cx);
+        assert_eq!(commands.try_recv(), Ok(Command::SyncNow));
+    }
+
+    #[gpui_kit::test]
+    fn escape_keeps_the_selection_and_k_then_moves_up(cx: &mut TestAppContext) {
+        let (_dir, window, view, _commands) = open_with_selected_event(cx);
+        let model = cx.read(|cx| view.read(cx).model().clone());
+        {
+            let db = cx.read(|cx| model.read(cx).db().to_owned());
+            let mut store = takt_store::Store::open(&db).unwrap();
+            let start = Utc::now() + TimeDelta::hours(3);
+            let event: Item<EventFields> = Item::from_value(json!({
+                "id": "e2", "summary": "Later",
+                "start": {"dateTime": start.to_rfc3339()},
+                "end": {"dateTime": (start + TimeDelta::hours(1)).to_rfc3339()}
+            }))
+            .unwrap();
+            store
+                .apply_events_page("acc", "cal", &[event], None)
+                .unwrap();
+        }
+        model.update(cx, |m, cx| m.reload(cx));
+        cx.run_until_parked();
+        let from = cx.read(|cx| model.read(cx).from);
+        let last = cx.read(|cx| {
+            let sections = &view.read(cx).list.read(cx).delegate().sections;
+            let s = sections.len() - 1;
+            IndexPath::new(sections[s].rows.len() - 1).section(s)
+        });
+        cx.update_window(window, |_, window, cx| {
+            let list = view.read(cx).list.clone();
+            list.update(cx, |list, cx| {
+                list.set_selected_index(Some(last), window, cx)
+            });
+            window.render_frame(cx);
+        })
+        .unwrap();
+
+        press(window, "enter", cx);
+        assert_eq!(detail_title(&view, cx).as_deref(), Some("Later"));
+        press(window, "escape", cx);
+        assert_eq!(detail_title(&view, cx), None);
+        let selected = cx.read(|cx| view.read(cx).list.read(cx).selected_index());
+        assert_eq!(selected, Some(last));
+
+        press(window, "k", cx);
+        let selected = cx.read(|cx| view.read(cx).list.read(cx).selected_index());
+        assert_eq!(selected.map(|ix| (ix.section, ix.row)), Some((0, 0)));
+        assert_eq!(cx.read(|cx| model.read(cx).from), from);
     }
 
     #[gpui_kit::test]

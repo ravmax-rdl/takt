@@ -31,6 +31,8 @@ pub fn render(model: &CalendarModel, cx: &App) -> AnyElement {
     let now = Utc::now();
     h_flex()
         .w_full()
+        .min_w_0()
+        .overflow_hidden()
         .px_3()
         .py_1()
         .gap_4()
@@ -44,7 +46,10 @@ pub fn render(model: &CalendarModel, cx: &App) -> AnyElement {
                 .get(&a.account_id)
                 .map(|s| status_text(s, now, model.tz))
                 .unwrap_or_else(|| "waiting".into());
-            div().child(format!("{} · {state}", a.email))
+            div()
+                .min_w_0()
+                .truncate()
+                .child(format!("{} · {state}", a.email))
         }))
         .into_any_element()
 }

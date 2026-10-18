@@ -30,7 +30,7 @@ pub fn render(model: &CalendarModel, commands: &Sender<Command>, cx: &App) -> An
             let state = model.statuses.get(&account.account_id);
             let dot = match state {
                 Some(SyncState::Synced(_)) => theme.success,
-                Some(SyncState::Syncing) => theme.accent_foreground,
+                Some(SyncState::Syncing) => theme.info,
                 Some(SyncState::Error(_) | SyncState::NeedsReauth) => theme.danger,
                 _ => theme.muted_foreground,
             };

@@ -14,5 +14,8 @@ pub fn bind(cx: &mut App) {
         KeyBinding::new("t", JumpToToday, Some(CONTEXT)),
         KeyBinding::new("secondary-r", SyncNow, Some(CONTEXT)),
         KeyBinding::new("escape", CloseDetail, Some(CONTEXT)),
+        // The list's own escape (Cancel) would clear the selection; this
+        // deeper binding wins while the list is focused.
+        KeyBinding::new("escape", CloseDetail, Some("Takt > List")),
     ]);
 }
