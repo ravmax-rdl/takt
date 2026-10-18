@@ -101,7 +101,7 @@ pub fn instance_id(master_id: &str, original_start: &When) -> String {
 
 pub fn expand(
     master: &Master,
-    _exceptions: &[Exception],
+    exceptions: &[Exception],
     range: &Range,
 ) -> Result<Vec<Occurrence>, RecurError> {
     let all_day = series_kind(master)?;
@@ -116,6 +116,8 @@ pub fn expand(
         .dates
         .into_iter()
         .map(|dt| original_of(dt.with_timezone(&Utc), all_day))
+        // Any exception, cancelled or moved, replaces the generated occurrence.
+        .filter(|original| !exceptions.iter().any(|e| e.original_start == *original))
         .map(|original| Occurrence {
             instance_id: instance_id(&master.id, &original),
             source: Source::Generated,
@@ -125,8 +127,44 @@ pub fn expand(
         })
         .filter(|o| range.overlaps(&o.start, &o.end))
         .collect();
+    out.extend(
+        exceptions
+            .iter()
+            .filter(|e| !e.cancelled && range.overlaps(&e.start, &e.end))
+            .map(|e| Occurrence {
+                instance_id: e.id.clone(),
+                source: Source::Exception,
+                original_start: e.original_start,
+                start: e.start,
+                end: e.end,
+            }),
+    );
     sort(&mut out);
     Ok(out)
+}
+
+/// End of the series' last occurrence, or `None` when it never ends (or has
+/// more than [`MAX_OCCURRENCES`] occurrences, which callers treat the same way).
+pub fn series_end(master: &Master) -> Result<Option<When>, RecurError> {
+    let all_day = series_kind(master)?;
+    let bounded = master
+        .recurrence
+        .iter()
+        .map(|line| line.trim().to_ascii_uppercase())
+        .filter(|line| line.starts_with("RRULE"))
+        .all(|line| line.contains("UNTIL=") || line.contains("COUNT="));
+    if !bounded {
+        return Ok(None);
+    }
+    let duration = master.end.as_utc() - master.start.as_utc();
+    let result = parse_set(master, all_day)?.all(MAX_OCCURRENCES);
+    if result.limited {
+        return Ok(None);
+    }
+    Ok(Some(match result.dates.last() {
+        Some(dt) => shift(&original_of(dt.with_timezone(&Utc), all_day), duration),
+        None => master.end,
+    }))
 }
 
 fn series_kind(master: &Master) -> Result<bool, RecurError> {
@@ -148,7 +186,11 @@ fn to_rrule_tz(t: DateTime<Utc>) -> DateTime<rrule::Tz> {
 }
 
 fn original_of(t: DateTime<Utc>, all_day: bool) -> When {
-    if all_day { When::Date(t.date_naive()) } else { When::At(t) }
+    if all_day {
+        When::Date(t.date_naive())
+    } else {
+        When::At(t)
+    }
 }
 
 fn shift(start: &When, duration: TimeDelta) -> When {
