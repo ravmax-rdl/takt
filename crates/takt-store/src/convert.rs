@@ -1,11 +1,11 @@
 //! Turning Google's event fields into index columns and recurrence inputs.
 
-use chrono::{DateTime, NaiveDate, SecondsFormat, TimeZone, Utc};
+use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
 use chrono_tz::Tz;
 use takt_google::model::{EventDateTime, EventFields};
 use takt_recur::{Exception, Master, When};
 
-use crate::{StoreError, TimeSpan};
+use crate::TimeSpan;
 
 const DAY: i64 = 86_400;
 
@@ -21,19 +21,6 @@ pub(crate) fn encode_when(when: &When) -> String {
         When::At(t) => t.to_rfc3339_opts(SecondsFormat::Secs, true),
         When::Date(d) => d.format("%Y-%m-%d").to_string(),
     }
-}
-
-// Used by the occurrence query (Task 10).
-#[allow(dead_code)]
-pub(crate) fn decode_when(text: &str) -> Result<When, StoreError> {
-    if text.len() == 10 {
-        return NaiveDate::parse_from_str(text, "%Y-%m-%d")
-            .map(When::Date)
-            .map_err(|e| StoreError::Corrupt(format!("date {text}: {e}")));
-    }
-    DateTime::parse_from_rfc3339(text)
-        .map(|t| When::At(t.with_timezone(&Utc)))
-        .map_err(|e| StoreError::Corrupt(format!("instant {text}: {e}")))
 }
 
 pub(crate) fn zone(name: Option<&str>) -> Option<Tz> {
