@@ -131,7 +131,10 @@ impl AccountEngine {
         if with_meta {
             match self.sync_meta().await {
                 Ok(()) => {
-                    *self.meta_synced_at.lock().expect("meta mutex poisoned") = Some(Instant::now())
+                    *self
+                        .meta_synced_at
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner) = Some(Instant::now())
                 }
                 Err(error) if ends_round(&error) => return Err(error),
                 Err(error) => {
@@ -179,7 +182,7 @@ impl AccountEngine {
     pub fn meta_due(&self, every: Duration) -> bool {
         self.meta_synced_at
             .lock()
-            .expect("meta mutex poisoned")
+            .unwrap_or_else(PoisonError::into_inner)
             .is_none_or(|t| t.elapsed() >= every)
     }
 
