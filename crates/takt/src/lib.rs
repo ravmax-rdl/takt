@@ -1,7 +1,9 @@
 //! takt: a desktop client for Google Calendar and Google Tasks.
 
 pub mod agenda;
+pub mod config;
 pub mod detail;
+pub mod logging;
 
 /// The OS time zone, used for every displayed time. Falls back to UTC.
 pub fn display_zone() -> chrono_tz::Tz {
