@@ -142,15 +142,24 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// Drops a calendar and its events, and the account's calendar-list token:
+    /// the token no longer describes what is stored, so the next round fetches
+    /// the full list (and brings the calendar back if access returns).
     pub fn remove_calendar(
         &mut self,
         account_id: &str,
         calendar_id: &str,
     ) -> Result<(), StoreError> {
-        self.conn.execute(
+        let tx = self.conn.transaction()?;
+        tx.execute(
             "DELETE FROM calendars WHERE account_id = ?1 AND calendar_id = ?2",
             params![account_id, calendar_id],
         )?;
+        tx.execute(
+            "UPDATE accounts SET calendar_list_sync_token = NULL WHERE account_id = ?1",
+            params![account_id],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 

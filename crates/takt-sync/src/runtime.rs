@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use takt_google::{
@@ -343,17 +343,13 @@ async fn account_loop(
         shared.events.clone(),
     );
     let mut wake = shared.wake.clone();
-    let mut last_meta: Option<Instant> = None;
     let mut offline_since: Option<DateTime<Utc>> = None;
     let mut offline_delay = OFFLINE_FIRST_RETRY;
     loop {
-        let with_meta = last_meta.is_none_or(|t| t.elapsed() >= shared.intervals.meta);
+        let with_meta = engine.meta_due(shared.intervals.meta);
         shared.status(&account_id, SyncState::Syncing);
         let wait = match engine.round(with_meta).await {
             Ok(()) => {
-                if with_meta {
-                    last_meta = Some(Instant::now());
-                }
                 offline_since = None;
                 offline_delay = OFFLINE_FIRST_RETRY;
                 shared.status(&account_id, SyncState::Synced(Utc::now()));

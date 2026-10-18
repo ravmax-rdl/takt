@@ -149,14 +149,111 @@ async fn calendar_that_404s_is_removed() {
         .mount(&f.server)
         .await;
     f.engine.round(false).await.unwrap();
-    assert!(
-        f.store
-            .lock()
-            .unwrap()
-            .calendars(Some("acc"))
-            .unwrap()
-            .is_empty()
+    let store = f.store.lock().unwrap();
+    assert!(store.calendars(Some("acc")).unwrap().is_empty());
+    assert_eq!(
+        store.calendar_list_sync_token("acc").unwrap(),
+        None,
+        "the next round refetches the full calendar list"
     );
+}
+
+#[tokio::test]
+async fn calendar_over_quota_is_kept() {
+    let f = fake().await;
+    mount_calendar_list(&f.server).await;
+    mount_no_tasks(&f.server).await;
+    Mock::given(method("GET"))
+        .and(path(EVENTS))
+        .respond_with(
+            ResponseTemplate::new(403)
+                .set_body_json(json!({"error": {"errors": [{"reason": "dailyLimitExceeded"}]}})),
+        )
+        .mount(&f.server)
+        .await;
+    assert!(f.engine.round(false).await.is_err());
+    let store = f.store.lock().unwrap();
+    assert_eq!(store.calendars(Some("acc")).unwrap().len(), 1);
+    assert_eq!(
+        store.calendar_list_sync_token("acc").unwrap().as_deref(),
+        Some("cl1")
+    );
+}
+
+async fn mount_one_task(server: &wiremock::MockServer) {
+    Mock::given(method("GET"))
+        .and(path("/tasks/v1/users/@me/lists"))
+        .respond_with(ok(json!({"items": [{"id": "L1", "title": "My Tasks"}]})))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/tasks/v1/lists/L1/tasks"))
+        .respond_with(ok(json!({"items": [
+            {"id": "t1", "title": "Pay rent", "due": "2026-10-20T00:00:00.000Z", "updated": "2026-10-17T10:00:00.000Z"}
+        ]})))
+        .mount(server)
+        .await;
+}
+
+fn tasks_due(f: &Fake) -> usize {
+    let d = |day| NaiveDate::from_ymd_opt(2026, 10, day).unwrap();
+    f.store
+        .lock()
+        .unwrap()
+        .tasks_due(d(19), d(21))
+        .unwrap()
+        .len()
+}
+
+#[tokio::test]
+async fn failing_calendar_does_not_stop_tasks() {
+    let f = fake().await;
+    mount_calendar_list(&f.server).await;
+    mount_one_task(&f.server).await;
+    Mock::given(method("GET"))
+        .and(path(EVENTS))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&f.server)
+        .await;
+    let err = f.engine.round(false).await.unwrap_err();
+    assert!(!err.is_offline() && !err.needs_reauth(), "{err}");
+    assert_eq!(tasks_due(&f), 1);
+}
+
+#[tokio::test]
+async fn failing_meta_does_not_stop_events_or_tasks() {
+    let f = fake().await;
+    mount_calendar_list(&f.server).await;
+    mount_one_task(&f.server).await;
+    Mock::given(method("GET"))
+        .and(path("/calendar/v3/colors"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&f.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(EVENTS))
+        .respond_with(ok(
+            json!({"items": [event("e1", 20)], "nextSyncToken": "s1"}),
+        ))
+        .mount(&f.server)
+        .await;
+    assert!(f.engine.round(true).await.is_err());
+    assert_eq!(ids(&f.store), ["e1"]);
+    assert_eq!(tasks_due(&f), 1);
+    let hour = std::time::Duration::from_secs(3600);
+    assert!(f.engine.meta_due(hour), "meta is retried next round");
+
+    f.server.reset().await;
+    mount_calendar_list(&f.server).await;
+    mount_meta(&f.server).await;
+    mount_no_tasks(&f.server).await;
+    Mock::given(method("GET"))
+        .and(path(EVENTS))
+        .respond_with(ok(json!({"items": [], "nextSyncToken": "s2"})))
+        .mount(&f.server)
+        .await;
+    f.engine.round(true).await.unwrap();
+    assert!(!f.engine.meta_due(hour));
 }
 
 #[tokio::test]

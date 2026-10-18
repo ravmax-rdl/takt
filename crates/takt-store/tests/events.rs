@@ -188,8 +188,12 @@ fn removing_a_calendar_removes_its_events() {
     store
         .apply_events_page("acc", "cal", &[ev(standup())], None)
         .unwrap();
+    store
+        .apply_calendar_list_page("acc", &[], Some("cl1"))
+        .unwrap();
     store.remove_calendar("acc", "cal").unwrap();
     assert!(store.event_ids("acc", "cal").unwrap().is_empty());
+    assert_eq!(store.calendar_list_sync_token("acc").unwrap(), None);
 }
 
 fn at(day: u32, hour: u32, minute: u32) -> chrono::DateTime<Utc> {

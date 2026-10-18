@@ -1,6 +1,7 @@
 //! One sync round for one account, and what to do when Google says no.
 
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use futures::stream::{self, StreamExt};
@@ -31,6 +32,33 @@ impl SyncError {
     pub fn needs_reauth(&self) -> bool {
         matches!(self, SyncError::Google(GoogleError::InvalidGrant))
     }
+
+    /// Lower is more serious: re-auth stops the account, offline changes its status.
+    fn severity(&self) -> u8 {
+        if self.needs_reauth() {
+            0
+        } else if self.is_offline() {
+            1
+        } else {
+            2
+        }
+    }
+}
+
+/// The error a round reports: the most serious, the earliest among equals.
+fn most_serious(errors: Vec<SyncError>) -> Option<SyncError> {
+    errors.into_iter().min_by_key(SyncError::severity)
+}
+
+/// 403 reasons that mean "not now" rather than "no access".
+const TEMPORARY_FORBIDDEN: &[&str] = &["dailyLimitExceeded", "quotaExceeded"];
+
+fn is_lost_access(error: &GoogleError) -> bool {
+    match error {
+        GoogleError::NotFound => true,
+        GoogleError::Forbidden { reason } => !TEMPORARY_FORBIDDEN.contains(&reason.as_str()),
+        _ => false,
+    }
 }
 
 pub struct AccountEngine {
@@ -38,6 +66,7 @@ pub struct AccountEngine {
     client: GoogleClient,
     store: Arc<Mutex<Store>>,
     events: async_channel::Sender<SyncEvent>,
+    meta_synced_at: Mutex<Option<Instant>>,
 }
 
 impl AccountEngine {
@@ -52,6 +81,7 @@ impl AccountEngine {
             client,
             store,
             events,
+            meta_synced_at: Mutex::new(None),
         }
     }
 
@@ -61,10 +91,32 @@ impl AccountEngine {
 
     /// Calendar list, then settings and colours when asked, then every
     /// non-hidden calendar's events (primary first, four at a time), then tasks.
+    ///
+    /// One failing part does not stop the others. A revoked grant or lost
+    /// connection on the calendar list or meta ends the round at once, since
+    /// every later request would fail the same way. Otherwise the round runs to
+    /// the end and returns the most serious error: re-auth, then offline, then
+    /// the first other one.
     pub async fn round(&self, with_meta: bool) -> Result<(), SyncError> {
-        self.sync_calendar_list().await?;
+        let mut errors = Vec::new();
+        if let Err(error) = self.sync_calendar_list().await {
+            if error.needs_reauth() || error.is_offline() {
+                return Err(error);
+            }
+            tracing::warn!(account = %self.account_id, %error, "calendar list sync failed; using stored calendars");
+            errors.push(error);
+        }
         if with_meta {
-            self.sync_meta().await?;
+            match self.sync_meta().await {
+                Ok(()) => {
+                    *self.meta_synced_at.lock().expect("meta mutex poisoned") = Some(Instant::now())
+                }
+                Err(error) if error.needs_reauth() || error.is_offline() => return Err(error),
+                Err(error) => {
+                    tracing::warn!(account = %self.account_id, %error, "settings and colours sync failed");
+                    errors.push(error);
+                }
+            }
         }
         let calendars: Vec<String> = self
             .with_store(|s| s.calendars(Some(&self.account_id)))?
@@ -80,8 +132,24 @@ impl AccountEngine {
             .buffer_unordered(PARALLEL_CALENDARS)
             .collect()
             .await;
-        results.into_iter().collect::<Result<(), _>>()?;
-        self.sync_tasks().await
+        for error in results.into_iter().filter_map(Result::err) {
+            tracing::warn!(account = %self.account_id, %error, "calendar sync failed");
+            errors.push(error);
+        }
+        if let Err(error) = self.sync_tasks().await {
+            tracing::warn!(account = %self.account_id, %error, "tasks sync failed");
+            errors.push(error);
+        }
+        most_serious(errors).map_or(Ok(()), Err)
+    }
+
+    /// Whether settings and colours were last synced longer than `every` ago
+    /// (or never), so the next round should fetch them.
+    pub fn meta_due(&self, every: Duration) -> bool {
+        self.meta_synced_at
+            .lock()
+            .expect("meta mutex poisoned")
+            .is_none_or(|t| t.elapsed() >= every)
     }
 
     async fn sync_calendar_list(&self) -> Result<(), SyncError> {
@@ -168,8 +236,10 @@ impl AccountEngine {
                         self.emit_everything();
                         continue 'restart;
                     }
-                    Err(GoogleError::NotFound | GoogleError::Forbidden { .. }) => {
-                        tracing::info!(account = %self.account_id, calendar = %calendar_id, "lost access; removing calendar");
+                    Err(e) if is_lost_access(&e) => {
+                        // remove_calendar also clears the calendar-list token, so the
+                        // next round refetches the whole list and can bring it back.
+                        tracing::info!(account = %self.account_id, calendar = %calendar_id, error = %e, "lost access; removing calendar");
                         self.with_store(|s| s.remove_calendar(&self.account_id, calendar_id))?;
                         self.emit_everything();
                         return Ok(());
@@ -183,7 +253,9 @@ impl AccountEngine {
     async fn sync_tasks(&self) -> Result<(), SyncError> {
         let lists = match self.client.task_lists().await {
             Ok(lists) => lists,
-            Err(GoogleError::Forbidden { reason }) => {
+            Err(GoogleError::Forbidden { reason })
+                if !TEMPORARY_FORBIDDEN.contains(&reason.as_str()) =>
+            {
                 tracing::warn!(account = %self.account_id, %reason, "Tasks API not available; skipping tasks");
                 return Ok(());
             }
@@ -253,5 +325,52 @@ impl AccountEngine {
             everything: true,
             ..ChangeSet::default()
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn http(status: u16) -> SyncError {
+        GoogleError::Http {
+            status,
+            body: String::new(),
+        }
+        .into()
+    }
+
+    #[test]
+    fn reauth_outranks_offline_which_outranks_the_rest() {
+        let offline = || SyncError::from(GoogleError::Network("down".into()));
+        let reauth = SyncError::from(GoogleError::InvalidGrant);
+        assert!(
+            most_serious(vec![http(500), offline(), reauth])
+                .unwrap()
+                .needs_reauth()
+        );
+        assert!(
+            most_serious(vec![http(500), offline()])
+                .unwrap()
+                .is_offline()
+        );
+        let first = most_serious(vec![http(500), http(502)]).unwrap();
+        assert!(matches!(
+            first,
+            SyncError::Google(GoogleError::Http { status: 500, .. })
+        ));
+        assert!(most_serious(Vec::new()).is_none());
+    }
+
+    #[test]
+    fn quota_403s_are_not_lost_access() {
+        let forbidden = |reason: &str| GoogleError::Forbidden {
+            reason: reason.into(),
+        };
+        assert!(is_lost_access(&GoogleError::NotFound));
+        assert!(is_lost_access(&forbidden("forbidden")));
+        assert!(!is_lost_access(&forbidden("dailyLimitExceeded")));
+        assert!(!is_lost_access(&forbidden("quotaExceeded")));
+        assert!(!is_lost_access(&GoogleError::Gone));
     }
 }
