@@ -90,7 +90,7 @@ impl GoogleClient {
                 Outcome::RefreshAndRetry if !refreshed => {
                     refreshed = true;
                     attempt -= 1;
-                    self.auth.access_token(true).await?;
+                    self.auth.refresh_if_stale(&token).await?;
                 }
                 Outcome::RefreshAndRetry => {
                     return Err(GoogleError::Http {

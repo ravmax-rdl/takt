@@ -1,9 +1,11 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use takt_google::*;
 use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -100,14 +102,22 @@ async fn mount_code_exchange(server: &MockServer) {
         .await;
 }
 
-fn browser_that_returns(state_override: Option<&'static str>) -> impl FnOnce(&Url) {
+type SeenChallenge = Arc<Mutex<Option<String>>>;
+
+fn browser_that_returns(
+    state_override: Option<&'static str>,
+    seen_challenge: SeenChallenge,
+) -> impl FnOnce(&Url) {
     move |auth_url: &Url| {
         let q: HashMap<String, String> = auth_url.query_pairs().into_owned().collect();
+        *seen_challenge.lock().unwrap() = Some(q["code_challenge"].clone());
         let state = state_override
             .map(str::to_owned)
             .unwrap_or_else(|| q["state"].clone());
+        let favicon = format!("{}/favicon.ico", q["redirect_uri"]);
         let callback = format!("{}/?code=the-code&state={state}", q["redirect_uri"]);
         tokio::spawn(async move {
+            let _ = reqwest::get(favicon).await;
             let _ = reqwest::get(callback).await;
         });
     }
@@ -118,11 +128,12 @@ async fn sign_in_round_trip() {
     let server = MockServer::start().await;
     mount_code_exchange(&server).await;
     let endpoints = Endpoints::rooted_at(&server.uri());
+    let seen = SeenChallenge::default();
     let signed = sign_in(
         &reqwest::Client::new(),
         &endpoints,
         &oauth(),
-        browser_that_returns(None),
+        browser_that_returns(None, seen.clone()),
     )
     .await
     .unwrap();
@@ -130,6 +141,96 @@ async fn sign_in_round_trip() {
     assert_eq!(signed.email, "me@example.com");
     assert_eq!(signed.refresh_token, "rt");
     assert_eq!(signed.access_token, "at");
+
+    let exchange = &server.received_requests().await.unwrap()[0];
+    let form: HashMap<String, String> = Url::parse(&format!(
+        "http://x/?{}",
+        String::from_utf8_lossy(&exchange.body)
+    ))
+    .unwrap()
+    .query_pairs()
+    .into_owned()
+    .collect();
+    let challenge = seen.lock().unwrap().clone().unwrap();
+    assert_eq!(
+        URL_SAFE_NO_PAD.encode(Sha256::digest(form["code_verifier"].as_bytes())),
+        challenge
+    );
+    assert!(form["redirect_uri"].starts_with("http://127.0.0.1:"));
+}
+
+#[tokio::test]
+async fn sign_in_rejects_missing_scopes() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "at", "expires_in": 3599, "refresh_token": "rt",
+            "scope": "openid email https://www.googleapis.com/auth/calendar",
+            "id_token": id_token("sub-1", "me@example.com")
+        })))
+        .mount(&server)
+        .await;
+    let endpoints = Endpoints::rooted_at(&server.uri());
+    let err = sign_in(
+        &reqwest::Client::new(),
+        &endpoints,
+        &oauth(),
+        browser_that_returns(None, SeenChallenge::default()),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(&err, GoogleError::AuthFlow(m) if m.contains("auth/tasks")),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn sign_in_ignores_denial_with_wrong_state() {
+    let server = MockServer::start().await;
+    mount_code_exchange(&server).await;
+    let endpoints = Endpoints::rooted_at(&server.uri());
+    let result = sign_in(
+        &reqwest::Client::new(),
+        &endpoints,
+        &oauth(),
+        |auth_url: &Url| {
+            let q: HashMap<String, String> = auth_url.query_pairs().into_owned().collect();
+            let base = q["redirect_uri"].clone();
+            let state = q["state"].clone();
+            tokio::spawn(async move {
+                let _ = reqwest::get(format!("{base}/?error=access_denied&state=forged")).await;
+                let _ = reqwest::get(format!("{base}/?code=the-code&state={state}")).await;
+            });
+        },
+    )
+    .await;
+    assert_eq!(result.unwrap().sub, "sub-1");
+}
+
+#[tokio::test]
+async fn sign_in_reports_denial_with_matching_state() {
+    let server = MockServer::start().await;
+    let endpoints = Endpoints::rooted_at(&server.uri());
+    let err = sign_in(
+        &reqwest::Client::new(),
+        &endpoints,
+        &oauth(),
+        |auth_url: &Url| {
+            let q: HashMap<String, String> = auth_url.query_pairs().into_owned().collect();
+            let url = format!(
+                "{}/?error=access_denied&state={}",
+                q["redirect_uri"], q["state"]
+            );
+            tokio::spawn(async move {
+                let _ = reqwest::get(url).await;
+            });
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(&err, GoogleError::AuthFlow(m) if m.contains("access_denied")));
 }
 
 #[test]
@@ -172,7 +273,7 @@ async fn sign_in_rejects_state_mismatch() {
         &reqwest::Client::new(),
         &endpoints,
         &oauth(),
-        browser_that_returns(Some("forged")),
+        browser_that_returns(Some("forged"), SeenChallenge::default()),
     )
     .await
     .unwrap_err();
@@ -205,6 +306,39 @@ async fn cached_access_token_is_reused() {
     let auth = auth_for(&server);
     assert_eq!(auth.access_token(false).await.unwrap(), "at1");
     assert_eq!(auth.access_token(false).await.unwrap(), "at1");
+}
+
+#[tokio::test]
+async fn concurrent_access_token_calls_refresh_once() {
+    let server = MockServer::start().await;
+    mount_refresh(&server, "at1", 1).await;
+    let auth = auth_for(&server);
+    let (a, b, c, d, e, f) = tokio::join!(
+        auth.access_token(false),
+        auth.access_token(false),
+        auth.access_token(false),
+        auth.access_token(false),
+        auth.access_token(false),
+        auth.access_token(false),
+    );
+    for token in [a, b, c, d, e, f] {
+        assert_eq!(token.unwrap(), "at1");
+    }
+}
+
+#[tokio::test]
+async fn refresh_if_stale_skips_an_already_replaced_token() {
+    let server = MockServer::start().await;
+    mount_refresh(&server, "new", 1).await;
+    let auth = auth_for(&server).with_access_token("old", Duration::from_secs(3600));
+    let (a, b, c) = tokio::join!(
+        auth.refresh_if_stale("old"),
+        auth.refresh_if_stale("old"),
+        auth.refresh_if_stale("old"),
+    );
+    for token in [a, b, c] {
+        assert_eq!(token.unwrap(), "new");
+    }
 }
 
 #[tokio::test]

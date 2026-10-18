@@ -182,6 +182,7 @@ struct TokenResponse {
     expires_in: u64,
     refresh_token: Option<String>,
     id_token: Option<String>,
+    scope: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -227,19 +228,24 @@ pub async fn sign_in(
     .await
 }
 
+/// How long one browser connection may take to send its request line.
+const READ_TIMEOUT: Duration = Duration::from_secs(5);
+
 async fn receive_code(listener: &TcpListener, expected_state: &str) -> Result<String, GoogleError> {
     loop {
-        let (mut stream, _) = listener
-            .accept()
-            .await
-            .map_err(|e| GoogleError::AuthFlow(e.to_string()))?;
+        // A flaky or idle connection (browser preconnects, port scanners) must
+        // not end the sign-in; only the redirect itself can.
+        let Ok((mut stream, _)) = listener.accept().await else {
+            continue;
+        };
         let mut buf = vec![0u8; 8192];
-        let n = stream
-            .read(&mut buf)
-            .await
-            .map_err(|e| GoogleError::AuthFlow(e.to_string()))?;
+        let n = match tokio::time::timeout(READ_TIMEOUT, stream.read(&mut buf)).await {
+            Ok(Ok(n)) => n,
+            Ok(Err(_)) | Err(_) => continue,
+        };
         let request = String::from_utf8_lossy(&buf[..n]);
-        match parse_redirect_request_line(request.lines().next().unwrap_or_default()) {
+        let line = request.lines().next().unwrap_or_default();
+        match parse_redirect_request_line(line) {
             Redirect::Code { code, state } if state == expected_state => {
                 respond(
                     &mut stream,
@@ -258,7 +264,9 @@ async fn receive_code(listener: &TcpListener, expected_state: &str) -> Result<St
                 .await;
                 return Err(GoogleError::AuthFlow("state mismatch".into()));
             }
-            Redirect::Denied(reason) => {
+            // An error redirect is only believed when it carries our state;
+            // anything else could be a stray local request.
+            Redirect::Denied(reason) if request_state(line).as_deref() == Some(expected_state) => {
                 respond(
                     &mut stream,
                     "200 OK",
@@ -268,9 +276,19 @@ async fn receive_code(listener: &TcpListener, expected_state: &str) -> Result<St
                 return Err(GoogleError::AuthFlow(format!("consent denied: {reason}")));
             }
             // Browsers also ask for /favicon.ico; ignore anything that is not the redirect.
-            Redirect::Other => respond(&mut stream, "404 Not Found", "").await,
+            Redirect::Denied(_) | Redirect::Other => {
+                respond(&mut stream, "404 Not Found", "").await
+            }
         }
     }
+}
+
+fn request_state(line: &str) -> Option<String> {
+    let target = line.split_whitespace().nth(1)?;
+    let url = Url::parse(&format!("http://127.0.0.1{target}")).ok()?;
+    url.query_pairs()
+        .find(|(key, _)| key == "state")
+        .map(|(_, value)| value.into_owned())
 }
 
 async fn respond(stream: &mut TcpStream, status: &str, message: &str) {
@@ -305,6 +323,20 @@ pub async fn exchange_code(
     .await?;
     let token: TokenResponse =
         serde_json::from_str(&body).map_err(|e| GoogleError::Decode(e.to_string()))?;
+    if let Some(granted) = &token.scope {
+        let granted: Vec<&str> = granted.split_whitespace().collect();
+        let missing: Vec<&str> = SCOPES[..2]
+            .iter()
+            .copied()
+            .filter(|required| !granted.contains(required))
+            .collect();
+        if !missing.is_empty() {
+            return Err(GoogleError::AuthFlow(format!(
+                "Google did not grant the access takt needs (missing {}); sign in again and allow Calendar and Tasks access",
+                missing.join(", ")
+            )));
+        }
+    }
     let id_token = token
         .id_token
         .ok_or_else(|| GoogleError::AuthFlow("Google returned no id_token".into()))?;
@@ -408,6 +440,22 @@ impl Auth {
         {
             return Ok(token.clone());
         }
+        self.refresh(&mut cache).await
+    }
+
+    /// Refreshes after the API rejected `rejected`, unless another caller
+    /// already replaced that token, so concurrent 401s cause one refresh.
+    pub async fn refresh_if_stale(&self, rejected: &str) -> Result<String, GoogleError> {
+        let mut cache = self.cache.lock().await;
+        if let Some((token, _)) = cache.as_ref()
+            && token != rejected
+        {
+            return Ok(token.clone());
+        }
+        self.refresh(&mut cache).await
+    }
+
+    async fn refresh(&self, cache: &mut Option<(String, Instant)>) -> Result<String, GoogleError> {
         let body = post_token_form(
             &self.http,
             &self.token_url,
