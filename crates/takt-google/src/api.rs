@@ -99,6 +99,41 @@ impl GoogleClient {
         push_tokens(&mut url, None, page_token);
         Page::from_value(self.get_json(url).await?)
     }
+
+    /// Google's own expansion of a series. Used only to capture test fixtures.
+    pub async fn instances(
+        &self,
+        calendar_id: &str,
+        event_id: &str,
+        time_min: DateTime<Utc>,
+        time_max: DateTime<Utc>,
+    ) -> Result<Vec<Item<EventFields>>, GoogleError> {
+        let mut out = Vec::new();
+        let mut page_token: Option<String> = None;
+        loop {
+            let mut url = join(
+                &self.endpoints.calendar,
+                &["calendars", calendar_id, "events", event_id, "instances"],
+            )?;
+            url.query_pairs_mut()
+                .append_pair(
+                    "timeMin",
+                    &time_min.to_rfc3339_opts(SecondsFormat::Secs, true),
+                )
+                .append_pair(
+                    "timeMax",
+                    &time_max.to_rfc3339_opts(SecondsFormat::Secs, true),
+                )
+                .append_pair("maxResults", "2500");
+            push_tokens(&mut url, None, page_token.as_deref());
+            let page: Page<EventFields> = Page::from_value(self.get_json(url).await?)?;
+            out.extend(page.items);
+            match page.next_page_token {
+                Some(next) => page_token = Some(next),
+                None => return Ok(out),
+            }
+        }
+    }
 }
 
 /// Appends path segments to a base ending in `/`. Segments are percent-encoded,

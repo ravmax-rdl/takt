@@ -211,14 +211,19 @@ async fn instances_collects_all_pages() {
         .and(query_param("timeMax", "2027-01-01T00:00:00Z"))
         .and(query_param_is_missing("pageToken"))
         .respond_with(ok(json!({"items": [{"id": "m_1"}], "nextPageToken": "n"})))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
     Mock::given(method("GET"))
         .and(path("/calendar/v3/calendars/cal/events/m/instances"))
         .and(query_param("pageToken", "n"))
         .respond_with(ok(json!({"items": [{"id": "m_2"}]})))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
     let from = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
     let to = Utc.with_ymd_and_hms(2027, 1, 1, 0, 0, 0).unwrap();
-    let got = client_at(&server).instances("cal", "m", from, to).await.unwrap();
+    let got = client_at(&server)
+        .instances("cal", "m", from, to)
+        .await
+        .unwrap();
     assert_eq!(got.len(), 2);
 }
