@@ -201,6 +201,24 @@ impl CalendarModel {
         self.reload(cx);
     }
 
+    pub fn today(&self) -> NaiveDate {
+        self.today
+    }
+
+    /// Re-reads the clock so "Today" moves on after midnight. Reloads only
+    /// when the date changed.
+    pub fn refresh_today(&mut self, cx: &mut Context<Self>) {
+        let today = Utc::now().with_timezone(&self.tz).date_naive();
+        self.set_today(today, cx);
+    }
+
+    fn set_today(&mut self, today: NaiveDate, cx: &mut Context<Self>) {
+        if today != self.today {
+            self.today = today;
+            self.reload(cx);
+        }
+    }
+
     pub fn jump_to_today(&mut self, cx: &mut Context<Self>) {
         self.today = Utc::now().with_timezone(&self.tz).date_naive();
         self.from = self.today;
@@ -377,6 +395,24 @@ mod tests {
             cx.read(|cx| model.read(cx).to),
             to + TimeDelta::days(2 * PAGE_DAYS)
         );
+    }
+
+    #[gpui_kit::test]
+    fn a_new_date_reloads_and_the_same_date_does_not(cx: &mut gpui_kit::TestAppContext) {
+        let (_dir, model) = open_model(cx);
+        let (today, generation) = cx.read(|cx| (model.read(cx).today(), model.read(cx).generation));
+        model.update(cx, |m, cx| m.set_today(today, cx));
+        assert_eq!(cx.read(|cx| model.read(cx).generation), generation);
+
+        let tomorrow = today + TimeDelta::days(1);
+        model.update(cx, |m, cx| m.set_today(tomorrow, cx));
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let m = model.read(cx);
+            assert_eq!(m.today(), tomorrow);
+            assert_eq!(m.generation, generation + 1);
+            assert!(!m.is_loading());
+        });
     }
 
     #[gpui_kit::test]

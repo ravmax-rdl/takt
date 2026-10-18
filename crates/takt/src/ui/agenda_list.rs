@@ -31,8 +31,6 @@ impl AgendaDelegate {
         find_row(&self.sections, date, key)
     }
 
-    // Used from Task 19 on, where moving up from the first row loads earlier days.
-    #[allow(dead_code)]
     pub fn is_first(&self, ix: IndexPath) -> bool {
         ix.section == 0 && ix.row == 0
     }
