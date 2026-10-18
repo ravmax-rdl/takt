@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use chrono::TimeDelta;
+use chrono::{DateTime, TimeDelta, Utc};
 use futures::stream::{self, StreamExt};
 use takt_google::{GoogleClient, GoogleError};
 use takt_store::{ChangeSet, Store, StoreError};
@@ -197,6 +197,9 @@ impl AccountEngine {
                 .with_store(|s| s.task_checkpoint(&self.account_id, list_id))?
                 .map(|checkpoint| checkpoint - TASKS_OVERLAP);
             let mut page_token: Option<String> = None;
+            // The newest `updated` across every page; stored only with the last
+            // page so an interrupted listing starts again from the old checkpoint.
+            let mut newest: Option<DateTime<Utc>> = None;
             loop {
                 let page = match self
                     .client
@@ -207,8 +210,17 @@ impl AccountEngine {
                     Err(GoogleError::NotFound) => break,
                     Err(e) => return Err(e.into()),
                 };
-                let changes = self
-                    .with_store(|s| s.apply_tasks_page(&self.account_id, list_id, &page.items))?;
+                newest = page
+                    .items
+                    .iter()
+                    .filter_map(|item| item.fields.updated)
+                    .chain(newest)
+                    .max();
+                let last = page.next_page_token.is_none();
+                let checkpoint = if last { newest } else { None };
+                let changes = self.with_store(|s| {
+                    s.apply_tasks_page(&self.account_id, list_id, &page.items, checkpoint)
+                })?;
                 self.emit(changes);
                 match page.next_page_token {
                     Some(next) => page_token = Some(next),

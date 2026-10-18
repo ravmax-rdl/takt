@@ -34,7 +34,7 @@ fn tasks_due_returns_dated_visible_tasks_in_range() {
             task(json!({"id": "c", "title": "Cleared", "status": "completed", "hidden": true, "due": "2026-10-21T00:00:00.000Z"})),
             task(json!({"id": "e", "title": "Undated", "status": "needsAction"})),
             task(json!({"id": "f", "title": "Later", "status": "needsAction", "due": "2026-12-01T00:00:00.000Z"})),
-        ])
+        ], None)
         .unwrap();
     let got = store.tasks_due(d(2026, 10, 19), d(2026, 10, 26)).unwrap();
     let titles: Vec<_> = got.iter().map(|t| t.title.as_str()).collect();
@@ -53,10 +53,16 @@ fn deleted_task_is_removed() {
             &[task(
                 json!({"id": "a", "title": "x", "due": "2026-10-20T00:00:00.000Z"}),
             )],
+            None,
         )
         .unwrap();
     let changes = store
-        .apply_tasks_page("acc", "L1", &[task(json!({"id": "a", "deleted": true}))])
+        .apply_tasks_page(
+            "acc",
+            "L1",
+            &[task(json!({"id": "a", "deleted": true}))],
+            None,
+        )
         .unwrap();
     assert!(
         store
@@ -65,6 +71,10 @@ fn deleted_task_is_removed() {
             .is_empty()
     );
     assert!(changes.task_lists.contains("L1"));
+}
+
+fn t(hour: u32) -> chrono::DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 10, 17, hour, 0, 0).unwrap()
 }
 
 #[test]
@@ -78,6 +88,7 @@ fn checkpoint_advances_and_never_goes_back() {
             &[task(
                 json!({"id": "a", "title": "x", "updated": "2026-10-17T11:00:00.000Z"}),
             )],
+            Some(t(11)),
         )
         .unwrap();
     store
@@ -87,12 +98,29 @@ fn checkpoint_advances_and_never_goes_back() {
             &[task(
                 json!({"id": "b", "title": "y", "updated": "2026-10-17T09:00:00.000Z"}),
             )],
+            Some(t(9)),
         )
         .unwrap();
-    assert_eq!(
-        store.task_checkpoint("acc", "L1").unwrap(),
-        Some(Utc.with_ymd_and_hms(2026, 10, 17, 11, 0, 0).unwrap())
-    );
+    assert_eq!(store.task_checkpoint("acc", "L1").unwrap(), Some(t(11)));
+}
+
+#[test]
+fn non_final_page_leaves_checkpoint_unchanged() {
+    let mut store = seeded();
+    store
+        .apply_tasks_page("acc", "L1", &[], Some(t(8)))
+        .unwrap();
+    store
+        .apply_tasks_page(
+            "acc",
+            "L1",
+            &[task(
+                json!({"id": "a", "title": "x", "updated": "2026-10-17T11:00:00.000Z"}),
+            )],
+            None,
+        )
+        .unwrap();
+    assert_eq!(store.task_checkpoint("acc", "L1").unwrap(), Some(t(8)));
 }
 
 #[test]
@@ -105,6 +133,7 @@ fn list_missing_from_full_list_is_removed_with_its_tasks() {
             &[task(
                 json!({"id": "a", "title": "x", "due": "2026-10-20T00:00:00.000Z"}),
             )],
+            None,
         )
         .unwrap();
     store
@@ -129,6 +158,7 @@ fn reapplying_task_lists_keeps_checkpoint() {
             &[task(
                 json!({"id": "a", "title": "x", "updated": "2026-10-17T11:00:00.000Z"}),
             )],
+            Some(t(11)),
         )
         .unwrap();
     store

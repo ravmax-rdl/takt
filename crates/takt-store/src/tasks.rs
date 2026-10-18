@@ -68,20 +68,22 @@ impl Store {
         .transpose()
     }
 
+    /// Applies one page of `tasks.list`. `checkpoint` is the newest `updated`
+    /// seen across all pages; pass it only with the last page, so an
+    /// interrupted listing restarts from the old checkpoint. It never goes back.
     pub fn apply_tasks_page(
         &mut self,
         account_id: &str,
         list_id: &str,
         items: &[Item<TaskFields>],
+        checkpoint: Option<DateTime<Utc>>,
     ) -> Result<ChangeSet, StoreError> {
-        let mut checkpoint = self.task_checkpoint(account_id, list_id)?;
+        let stored = self.task_checkpoint(account_id, list_id)?;
+        let checkpoint = checkpoint.map(|c| stored.map_or(c, |s| s.max(c)));
         let tx = self.conn.transaction()?;
         let mut changes = ChangeSet::default();
         for item in items {
             let t = &item.fields;
-            if let Some(updated) = t.updated {
-                checkpoint = Some(checkpoint.map_or(updated, |c| c.max(updated)));
-            }
             let old_due: Option<String> = tx
                 .query_row(
                     "SELECT due_date FROM tasks WHERE account_id = ?1 AND list_id = ?2 AND task_id = ?3",

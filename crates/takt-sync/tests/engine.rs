@@ -262,3 +262,83 @@ async fn forbidden_tasks_api_is_skipped() {
         .await;
     f.engine.round(false).await.unwrap();
 }
+
+async fn mount_task_pages(server: &wiremock::MockServer, second: ResponseTemplate) {
+    Mock::given(method("GET"))
+        .and(path(EVENTS))
+        .respond_with(ok(json!({"items": [], "nextSyncToken": "s1"})))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/tasks/v1/users/@me/lists"))
+        .respond_with(ok(json!({"items": [{"id": "L1", "title": "My Tasks"}]})))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/tasks/v1/lists/L1/tasks"))
+        .and(query_param_is_missing("pageToken"))
+        .respond_with(ok(json!({
+            "items": [{"id": "t1", "title": "Pay rent", "updated": "2026-10-17T11:00:00.000Z"}],
+            "nextPageToken": "p2"
+        })))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/tasks/v1/lists/L1/tasks"))
+        .and(query_param("pageToken", "p2"))
+        .respond_with(second)
+        .mount(server)
+        .await;
+}
+
+#[tokio::test]
+async fn interrupted_task_paging_resumes_from_the_old_checkpoint() {
+    let f = fake().await;
+    mount_calendar_list(&f.server).await;
+    mount_task_pages(&f.server, ResponseTemplate::new(500)).await;
+    assert!(f.engine.round(false).await.is_err());
+    assert_eq!(
+        f.store
+            .lock()
+            .unwrap()
+            .task_checkpoint("acc", "L1")
+            .unwrap(),
+        None
+    );
+
+    f.server.reset().await;
+    mount_calendar_list(&f.server).await;
+    mount_task_pages(
+        &f.server,
+        ok(json!({"items": [{"id": "t2", "title": "Call", "updated": "2026-10-17T09:00:00.000Z"}]})),
+    )
+    .await;
+    f.engine.round(false).await.unwrap();
+    let task_requests: Vec<_> = f
+        .server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.url.path() == "/tasks/v1/lists/L1/tasks")
+        .collect();
+    assert_eq!(task_requests.len(), 2);
+    assert!(
+        task_requests
+            .iter()
+            .all(|r| !r.url.query_pairs().any(|(k, _)| k == "updatedMin")),
+        "the retry lists everything again"
+    );
+    assert_eq!(
+        f.store
+            .lock()
+            .unwrap()
+            .task_checkpoint("acc", "L1")
+            .unwrap(),
+        Some(
+            chrono::DateTime::parse_from_rfc3339("2026-10-17T11:00:00Z")
+                .unwrap()
+                .to_utc()
+        )
+    );
+}
