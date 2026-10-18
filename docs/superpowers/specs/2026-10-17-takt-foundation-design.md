@@ -67,7 +67,7 @@ Channels between UI and sync (`async-channel`, so either executor can await them
 
 Sync never sends event data to the UI; the UI re-queries the store. The store is the only source of truth for the UI, which is what lets a later outbox write locally first without UI changes.
 
-Main dependencies: `gpui-kit` 0.7, `reqwest` 0.13 (rustls), `oauth2` 5, `keyring` 4, `rusqlite` 0.40 (bundled), `rusqlite_migration`, `rrule` 0.14, `chrono`, `chrono-tz`, `iana-time-zone`, `serde`, `serde_json`, `thiserror`, `tracing`, `directories`, `async-channel`, `tokio`. Test-only: `wiremock`, `proptest`.
+Main dependencies: `gpui-kit` 0.7, `reqwest` 0.13 (rustls), `sha2` + `base64` + `rand` for PKCE, `keyring` 4 (`v1` feature), `rusqlite` 0.40 (bundled), `rusqlite_migration`, `rrule` 0.14, `chrono`, `chrono-tz`, `iana-time-zone`, `serde`, `serde_json`, `thiserror`, `tracing`, `directories`, `async-channel`, `tokio`. Test-only: `wiremock`, `proptest`.
 
 ## 2. Auth and the Google client (`takt-google`)
 
@@ -96,7 +96,9 @@ Scopes, all requested on first sign-in so later sub-projects never need a second
 
 ### REST client
 
-Hand-written with `reqwest`. Endpoints used in sub-project 1:
+Hand-written with `reqwest`, including the OAuth token exchange. The `oauth2` crate is not used: version 5 is built against an older `reqwest`, and its standard token response drops Google's `id_token`.
+
+Endpoints used in sub-project 1:
 
 | Endpoint | Notes |
 |---|---|
@@ -131,9 +133,9 @@ Every row stores Google's original JSON. Extracted columns exist only for indexi
 | `calendars` | `account_id`, `calendar_id` | `summary`, `time_zone`, `background_color`, `foreground_color`, `access_role`, `selected`, `hidden`, `primary`, `events_sync_token` |
 | `events` | `account_id`, `calendar_id`, `event_id` | `kind` (`single` / `master` / `exception`), `status`, `ical_uid`, `recurring_event_id`, `original_start`, `start_utc`, `end_utc`, `all_day`, `series_end_utc` (masters; NULL when the series never ends), `etag`, `updated` |
 | `task_lists` | `account_id`, `list_id` | `title`, `updated`, `updated_min_checkpoint` |
-| `tasks` | `account_id`, `list_id`, `task_id` | `title`, `status`, `due_date`, `parent`, `position`, `completed`, `deleted`, `hidden`, `updated` |
+| `tasks` | `account_id`, `list_id`, `task_id` | `title`, `status`, `due_date`, `parent`, `position`, `completed`, `hidden`, `updated` |
 
-Indexes: `events (account_id, calendar_id, kind, start_utc, end_utc)`; `events (kind, start_utc, series_end_utc)` for masters; `events (account_id, calendar_id, recurring_event_id)` for exceptions; `tasks (due_date)`.
+Indexes: `events (kind, start_utc, end_utc)` for singles; `events (kind, start_utc, series_end_utc)` for masters; `events (account_id, calendar_id, recurring_event_id)` for exceptions; `tasks (due_date)`.
 
 Migrations: `rusqlite_migration`, starting from an empty database. WAL mode is set on open.
 
@@ -254,7 +256,7 @@ gpui-kit application with its own title bar, following the OS light or dark them
 
 ### Agenda
 
-- gpui-kit virtual list with day headers, opening on today, loading 30 days at a time when scrolling in either direction.
+- gpui-kit virtual list with day headers, opening on today. Scrolling near the bottom loads the next 30 days. gpui-kit's list only reports the bottom edge, so earlier days load from a "Load earlier" control at the top and when `k` is pressed on the first row.
 - Row: colour (event `colorId` from the palette, else the calendar colour), time range or "All day", title, location.
 - Account badge on each row when more than one account is signed in. An event present in two accounts appears as two rows.
 - Declined events are dimmed and struck through.
