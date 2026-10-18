@@ -22,6 +22,13 @@ pub const SCOPES: &[&str] = &[
     "email",
 ];
 
+/// The scopes sign-in fails without; the user can untick them on the consent
+/// screen. The identity scopes are not checked: the ID token proves them.
+const REQUIRED_SCOPES: &[&str] = &[
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/tasks",
+];
+
 const REFRESH_MARGIN: Duration = Duration::from_secs(60);
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -236,6 +243,9 @@ async fn receive_code(listener: &TcpListener, expected_state: &str) -> Result<St
         // A flaky or idle connection (browser preconnects, port scanners) must
         // not end the sign-in; only the redirect itself can.
         let Ok((mut stream, _)) = listener.accept().await else {
+            // Accept errors (such as running out of file descriptors) repeat
+            // at once; pause so the loop does not spin.
+            tokio::time::sleep(Duration::from_millis(50)).await;
             continue;
         };
         let mut buf = vec![0u8; 8192];
@@ -325,7 +335,7 @@ pub async fn exchange_code(
         serde_json::from_str(&body).map_err(|e| GoogleError::Decode(e.to_string()))?;
     if let Some(granted) = &token.scope {
         let granted: Vec<&str> = granted.split_whitespace().collect();
-        let missing: Vec<&str> = SCOPES[..2]
+        let missing: Vec<&str> = REQUIRED_SCOPES
             .iter()
             .copied()
             .filter(|required| !granted.contains(required))
@@ -474,5 +484,15 @@ impl Auth {
             Instant::now() + Duration::from_secs(fresh.expires_in),
         ));
         Ok(fresh.access_token)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn required_scopes_are_requested() {
+        assert!(REQUIRED_SCOPES.iter().all(|s| SCOPES.contains(s)));
     }
 }
