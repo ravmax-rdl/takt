@@ -4,7 +4,9 @@
 //! derived from it.
 
 mod accounts;
+mod convert;
 mod error;
+mod events;
 mod types;
 
 use std::path::Path;
