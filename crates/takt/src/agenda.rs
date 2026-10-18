@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, HashMap};
 use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, TimeDelta, Utc};
 use chrono_tz::Tz;
 use takt_store::{
-    AccountRow, CalendarRow, ColorPalette, Occurrence, TaskItem, When, display_instant,
+    AccountRow, CalendarRow, ColorPalette, Occurrence, TaskItem, When, day_start_utc,
+    display_instant,
 };
 
 pub const DEFAULT_COLOR: u32 = 0x039be5;
@@ -105,12 +106,10 @@ pub fn build_agenda(input: &AgendaInput) -> Vec<DaySection> {
                     .copied()
             })
             .unwrap_or(DEFAULT_COLOR);
-        let covered = days_covered(&o.start, &o.end, input.tz);
-        let (first, last) = (covered[0], *covered.last().expect("at least one day"));
-        for date in covered
-            .into_iter()
-            .filter(|d| *d >= input.from && *d < input.to)
-        {
+        let (first, last) = day_span(&o.start, &o.end, input.tz);
+        let shown_from = first.max(input.from);
+        let shown_last = input.to.pred_opt().map_or(last, |end| last.min(end));
+        for date in shown_from.iter_days().take_while(|d| *d <= shown_last) {
             let (group, label) = label_for(o, date, first, last, input.tz, input.use_24h);
             let row = AgendaRow {
                 key: RowKey::Event {
@@ -187,22 +186,23 @@ pub fn build_agenda(input: &AgendaInput) -> Vec<DaySection> {
         .collect()
 }
 
-/// Local dates an occurrence touches. An end at exactly local midnight does
-/// not count as touching that day.
-fn days_covered(start: &When, end: &When, tz: Tz) -> Vec<NaiveDate> {
-    let (first, last) = match (start, end) {
+/// The first and last local dates an occurrence touches (inclusive). An end
+/// at exactly the start of a local day does not count as touching that day;
+/// on a day whose midnight does not exist, its start is the first instant
+/// that does.
+fn day_span(start: &When, end: &When, tz: Tz) -> (NaiveDate, NaiveDate) {
+    match (start, end) {
         (When::Date(s), When::Date(e)) => (*s, if e > s { *e - TimeDelta::days(1) } else { *s }),
         _ => {
             let s = display_instant(start, tz).with_timezone(&tz);
             let e = display_instant(end, tz).with_timezone(&tz);
             let mut last = e.date_naive();
-            if e > s && e.time() == NaiveTime::MIN {
+            if e > s && e.with_timezone(&Utc) == day_start_utc(last, tz) {
                 last -= TimeDelta::days(1);
             }
             (s.date_naive(), last.max(s.date_naive()))
         }
-    };
-    first.iter_days().take_while(|d| *d <= last).collect()
+    }
 }
 
 fn label_for(
@@ -320,6 +320,9 @@ mod tests {
         calendars: Vec<CalendarRow>,
         palettes: HashMap<String, ColorPalette>,
         use_24h: bool,
+        tz: Tz,
+        from: NaiveDate,
+        to: NaiveDate,
     }
 
     impl Fixture {
@@ -331,6 +334,9 @@ mod tests {
                 calendars: vec![calendar("a", "#9fe1e7")],
                 palettes: HashMap::new(),
                 use_24h: true,
+                tz: Tz::UTC,
+                from: d(17),
+                to: d(31),
             }
         }
 
@@ -341,10 +347,10 @@ mod tests {
                 accounts: &self.accounts,
                 calendars: &self.calendars,
                 palettes: &self.palettes,
-                tz: Tz::UTC,
+                tz: self.tz,
                 today: d(17),
-                from: d(17),
-                to: d(31),
+                from: self.from,
+                to: self.to,
                 use_24h: self.use_24h,
             })
         }
@@ -430,6 +436,71 @@ mod tests {
             at("2026-10-21T00:00:00Z"),
         )];
         assert_eq!(f.build().len(), 1);
+    }
+
+    #[test]
+    fn event_ending_at_a_skipped_midnight_stays_on_one_day() {
+        // America/Santiago skips 2026-09-06 00:00; that day starts at 01:00
+        // (-03). 22:00 (-04) on the 5th to 01:00 on the 6th ends exactly at
+        // the start of the 6th.
+        let mut f = Fixture::new();
+        f.tz = "America/Santiago".parse().unwrap();
+        f.from = NaiveDate::from_ymd_opt(2026, 9, 1).unwrap();
+        f.to = NaiveDate::from_ymd_opt(2026, 9, 10).unwrap();
+        f.occurrences = vec![occ(
+            "a",
+            "s",
+            Some("Late"),
+            at("2026-09-06T02:00:00Z"),
+            at("2026-09-06T04:00:00Z"),
+        )];
+        let sections = f.build();
+        assert_eq!(
+            sections.iter().map(|s| s.date).collect::<Vec<_>>(),
+            [NaiveDate::from_ymd_opt(2026, 9, 5).unwrap()]
+        );
+        assert_eq!(sections[0].rows[0].time_label, "22:00–01:00");
+    }
+
+    #[test]
+    fn three_day_timed_event_is_all_day_in_the_middle() {
+        let mut f = Fixture::new();
+        f.occurrences = vec![occ(
+            "a",
+            "c",
+            Some("Conference"),
+            at("2026-10-20T10:00:00Z"),
+            at("2026-10-22T15:00:00Z"),
+        )];
+        let sections = f.build();
+        assert_eq!(
+            sections.iter().map(|s| s.date).collect::<Vec<_>>(),
+            [d(20), d(21), d(22)]
+        );
+        let labels: Vec<_> = sections
+            .iter()
+            .map(|s| s.rows[0].time_label.as_str())
+            .collect();
+        assert_eq!(labels, ["From 10:00", "All day", "Until 15:00"]);
+    }
+
+    #[test]
+    fn event_started_before_the_window_shows_only_its_days_inside() {
+        let mut f = Fixture::new();
+        f.occurrences = vec![occ(
+            "a",
+            "o",
+            Some("Ongoing"),
+            at("2026-10-10T20:00:00Z"),
+            at("2026-10-18T02:00:00Z"),
+        )];
+        let sections = f.build();
+        assert_eq!(
+            sections.iter().map(|s| s.date).collect::<Vec<_>>(),
+            [d(17), d(18)]
+        );
+        assert_eq!(sections[0].rows[0].time_label, "All day");
+        assert_eq!(sections[1].rows[0].time_label, "Until 02:00");
     }
 
     #[test]
