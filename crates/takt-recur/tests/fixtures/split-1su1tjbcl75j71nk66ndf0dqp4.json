@@ -1,0 +1,114 @@
+{
+  "name": "split",
+  "range": {
+    "start": "2026-01-01T00:00:00+00:00",
+    "end": "2028-01-01T00:00:00+00:00"
+  },
+  "calendarTimeZone": "UTC",
+  "master": {
+    "kind": "calendar#event",
+    "id": "1su1tjbcl75j71nk66ndf0dqp4",
+    "status": "confirmed",
+    "summary": "split",
+    "start": {
+      "dateTime": "2026-10-25T16:00:00Z",
+      "timeZone": "UTC"
+    },
+    "end": {
+      "dateTime": "2026-10-25T17:00:00Z",
+      "timeZone": "UTC"
+    },
+    "recurrence": [
+      "RRULE:FREQ=WEEKLY;UNTIL=20261121T235959Z;BYDAY=SU"
+    ],
+    "iCalUID": "1su1tjbcl75j71nk66ndf0dqp4@google.com",
+    "eventType": "default"
+  },
+  "exceptions": [],
+  "instances": [
+    {
+      "kind": "calendar#event",
+      "id": "1su1tjbcl75j71nk66ndf0dqp4_20261025T160000Z",
+      "status": "confirmed",
+      "summary": "split",
+      "start": {
+        "dateTime": "2026-10-25T16:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-25T17:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1su1tjbcl75j71nk66ndf0dqp4",
+      "originalStartTime": {
+        "dateTime": "2026-10-25T16:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1su1tjbcl75j71nk66ndf0dqp4@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "1su1tjbcl75j71nk66ndf0dqp4_20261101T160000Z",
+      "status": "confirmed",
+      "summary": "split",
+      "start": {
+        "dateTime": "2026-11-01T16:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-01T17:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1su1tjbcl75j71nk66ndf0dqp4",
+      "originalStartTime": {
+        "dateTime": "2026-11-01T16:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1su1tjbcl75j71nk66ndf0dqp4@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "1su1tjbcl75j71nk66ndf0dqp4_20261108T160000Z",
+      "status": "confirmed",
+      "summary": "split",
+      "start": {
+        "dateTime": "2026-11-08T16:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-08T17:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1su1tjbcl75j71nk66ndf0dqp4",
+      "originalStartTime": {
+        "dateTime": "2026-11-08T16:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1su1tjbcl75j71nk66ndf0dqp4@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "1su1tjbcl75j71nk66ndf0dqp4_20261115T160000Z",
+      "status": "confirmed",
+      "summary": "split",
+      "start": {
+        "dateTime": "2026-11-15T16:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-15T17:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1su1tjbcl75j71nk66ndf0dqp4",
+      "originalStartTime": {
+        "dateTime": "2026-11-15T16:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1su1tjbcl75j71nk66ndf0dqp4@google.com",
+      "eventType": "default"
+    }
+  ]
+}

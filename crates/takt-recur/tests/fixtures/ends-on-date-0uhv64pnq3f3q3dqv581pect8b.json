@@ -1,0 +1,471 @@
+{
+  "name": "ends-on-date",
+  "range": {
+    "start": "2026-01-01T00:00:00+00:00",
+    "end": "2028-01-01T00:00:00+00:00"
+  },
+  "calendarTimeZone": "UTC",
+  "master": {
+    "kind": "calendar#event",
+    "id": "0uhv64pnq3f3q3dqv581pect8b",
+    "status": "confirmed",
+    "summary": "ends-on-date",
+    "start": {
+      "dateTime": "2026-10-05T08:00:00Z",
+      "timeZone": "UTC"
+    },
+    "end": {
+      "dateTime": "2026-10-05T09:00:00Z",
+      "timeZone": "UTC"
+    },
+    "recurrence": [
+      "RRULE:FREQ=DAILY;COUNT=21"
+    ],
+    "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+    "eventType": "default"
+  },
+  "exceptions": [],
+  "instances": [
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261005T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-05T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-05T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-05T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261006T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-06T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-06T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-06T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261007T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-07T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-07T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-07T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261008T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-08T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-08T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-08T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261009T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-09T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-09T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-09T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261010T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-10T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-10T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-10T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261011T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-11T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-11T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-11T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261012T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-12T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-12T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-12T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261013T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-13T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-13T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-13T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261014T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-14T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-14T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-14T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261015T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-15T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-15T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-15T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261016T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-16T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-16T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-16T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261017T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-17T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-17T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-17T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261018T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-18T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-18T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-18T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261019T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-19T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-19T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-19T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261020T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-20T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-20T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-20T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261021T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-21T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-21T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-21T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261022T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-22T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-22T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-22T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261023T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-23T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-23T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-23T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261024T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-24T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-24T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-24T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "0uhv64pnq3f3q3dqv581pect8b_20261025T080000Z",
+      "status": "confirmed",
+      "summary": "ends-on-date",
+      "start": {
+        "dateTime": "2026-10-25T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-25T09:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "0uhv64pnq3f3q3dqv581pect8b",
+      "originalStartTime": {
+        "dateTime": "2026-10-25T08:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "0uhv64pnq3f3q3dqv581pect8b@google.com",
+      "eventType": "default"
+    }
+  ]
+}
