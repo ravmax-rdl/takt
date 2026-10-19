@@ -32,7 +32,7 @@ impl TokenStore for FlakyTokens {
     fn get(&self, email: &str) -> Result<Option<String>, GoogleError> {
         let failing = self
             .failing_reads
-            .fetch_update(SeqCst, SeqCst, |n| n.checked_sub(1))
+            .try_update(SeqCst, SeqCst, |n| n.checked_sub(1))
             .is_ok();
         if failing {
             return Err(GoogleError::TokenStore("keychain locked".into()));
