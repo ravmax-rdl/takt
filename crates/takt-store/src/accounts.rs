@@ -120,7 +120,8 @@ impl Store {
     pub fn calendars(&self, account_id: Option<&str>) -> Result<Vec<CalendarRow>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT c.account_id, c.calendar_id, c.summary, c.time_zone, c.background_color, c.foreground_color,
-                    c.access_role, c.selected, c.hidden, c.is_primary
+                    c.access_role, c.selected, c.hidden, c.is_primary,
+                    COALESCE(c.local_visible, c.selected) = 1 AND c.hidden = 0
              FROM calendars c JOIN accounts a ON a.account_id = c.account_id
              WHERE ?1 IS NULL OR c.account_id = ?1
              ORDER BY a.added_at, a.email, c.is_primary DESC, c.summary COLLATE NOCASE",
@@ -137,9 +138,30 @@ impl Store {
                 selected: row.get(7)?,
                 hidden: row.get(8)?,
                 primary: row.get(9)?,
+                visible: row.get(10)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Sets takt's own show/hide choice for a calendar; `None` goes back to
+    /// following Google's `selected`. Nothing is written to Google, and sync
+    /// pages leave the choice alone.
+    pub fn set_calendar_visible(
+        &mut self,
+        account_id: &str,
+        calendar_id: &str,
+        visible: Option<bool>,
+    ) -> Result<ChangeSet, StoreError> {
+        let updated = self.conn.execute(
+            "UPDATE calendars SET local_visible = ?3 WHERE account_id = ?1 AND calendar_id = ?2",
+            params![account_id, calendar_id, visible],
+        )?;
+        let mut changes = ChangeSet::default();
+        if updated > 0 {
+            changes.touch_calendar(calendar_id, None);
+        }
+        Ok(changes)
     }
 
     /// Drops a calendar and its events, and the account's calendar-list token:
