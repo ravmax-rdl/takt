@@ -2,8 +2,15 @@
 pub enum GoogleError {
     #[error("network error: {0}")]
     Network(String),
-    #[error("sync token no longer valid (410)")]
+    /// A sync token Google no longer accepts, or a resource already deleted.
+    #[error("no longer available (410)")]
     Gone,
+    /// A write sent with `If-Match` whose etag is no longer the resource's.
+    #[error("changed since it was read (412)")]
+    PreconditionFailed,
+    /// An insert whose ID already exists.
+    #[error("already exists (409)")]
+    Conflict,
     #[error("not found (404)")]
     NotFound,
     #[error("forbidden: {reason}")]

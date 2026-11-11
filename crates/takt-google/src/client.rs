@@ -1,10 +1,10 @@
-//! Authenticated GET with Google's retry rules.
+//! Authenticated requests with Google's retry rules.
 
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use reqwest::header::{HeaderMap, RETRY_AFTER};
-use reqwest::{StatusCode, Url};
+use reqwest::header::{HeaderMap, IF_MATCH, RETRY_AFTER};
+use reqwest::{Method, StatusCode, Url};
 use serde_json::Value;
 
 use crate::{Auth, Endpoints, GoogleError};
@@ -69,24 +69,53 @@ impl GoogleClient {
     }
 
     pub async fn get_json(&self, url: Url) -> Result<Value, GoogleError> {
+        self.send_json(Method::GET, url, None, None)
+            .await?
+            .ok_or_else(|| GoogleError::Decode("empty response body".into()))
+    }
+
+    /// Sends one request, with the same retries as a read: 429, 5xx and
+    /// rate-limit 403s are tried again, a 401 refreshes the token once.
+    /// `if_match` makes Google reject the write with
+    /// [`GoogleError::PreconditionFailed`] when the resource's etag differs.
+    /// `None` is a success without a body (204).
+    ///
+    /// A write Google applied but answered with a 5xx is sent again; callers
+    /// make that harmless (an `If-Match` etag, a client-chosen ID).
+    pub async fn send_json(
+        &self,
+        method: Method,
+        url: Url,
+        body: Option<&Value>,
+        if_match: Option<&str>,
+    ) -> Result<Option<Value>, GoogleError> {
         let mut attempt = 0;
         let mut refreshed = false;
         loop {
             attempt += 1;
             let token = self.auth.access_token(false).await?;
-            let response = self
+            let mut request = self
                 .http
-                .get(url.clone())
-                .bearer_auth(&token)
-                .send()
-                .await
-                .map_err(GoogleError::from_reqwest)?;
+                .request(method.clone(), url.clone())
+                .bearer_auth(&token);
+            if let Some(etag) = if_match {
+                request = request.header(IF_MATCH, etag);
+            }
+            if let Some(body) = body {
+                request = request.json(body);
+            }
+            let response = request.send().await.map_err(GoogleError::from_reqwest)?;
             let status = response.status();
             let retry_after =
                 retry_after(response.headers()).map(|wait| wait.min(self.retry.max_delay));
             let body = response.text().await.map_err(GoogleError::from_reqwest)?;
             if status.is_success() {
-                return serde_json::from_str(&body).map_err(|e| GoogleError::Decode(e.to_string()));
+                if body.trim().is_empty() {
+                    return Ok(None);
+                }
+                return serde_json::from_str(&body)
+                    .map(Some)
+                    .map_err(|e| GoogleError::Decode(e.to_string()));
             }
             match classify(status, &body) {
                 Outcome::RefreshAndRetry if !refreshed => {
@@ -165,7 +194,9 @@ fn classify(status: StatusCode, body: &str) -> Outcome {
     match status.as_u16() {
         401 => Outcome::RefreshAndRetry,
         404 => Outcome::Fail(GoogleError::NotFound),
+        409 => Outcome::Fail(GoogleError::Conflict),
         410 => Outcome::Fail(GoogleError::Gone),
+        412 => Outcome::Fail(GoogleError::PreconditionFailed),
         429 => Outcome::Retry,
         403 => match error_reason(body).as_deref() {
             Some("rateLimitExceeded" | "userRateLimitExceeded") => Outcome::Retry,

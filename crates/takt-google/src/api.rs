@@ -1,7 +1,8 @@
-//! The read endpoints sub-project 1 uses.
+//! The Calendar and Tasks endpoints takt calls.
 
 use chrono::{DateTime, SecondsFormat, Utc};
-use reqwest::Url;
+use reqwest::{Method, Url};
+use serde_json::Value;
 
 use crate::model::{
     CalendarListEntry, Colors, EventFields, Item, Page, Setting, TaskFields, TaskListFields,
@@ -133,6 +134,138 @@ impl GoogleClient {
             }
         }
     }
+}
+
+/// Whether Google emails the guests about a write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SendUpdates {
+    #[default]
+    None,
+    All,
+}
+
+impl SendUpdates {
+    fn as_str(self) -> &'static str {
+        match self {
+            SendUpdates::None => "none",
+            SendUpdates::All => "all",
+        }
+    }
+}
+
+/// A new event ID Google accepts: 26 base32hex characters. Choosing the ID
+/// before `events.insert` lets a repeated insert be told from a second event.
+pub fn new_event_id() -> String {
+    const ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuv";
+    (0..26)
+        .map(|_| ALPHABET[rand::random_range(0..ALPHABET.len())] as char)
+        .collect()
+}
+
+/// The write endpoints. Every one takes and returns whole JSON, so fields
+/// takt does not know pass through untouched.
+impl GoogleClient {
+    fn event_url(
+        &self,
+        calendar_id: &str,
+        tail: &[&str],
+        send_updates: Option<SendUpdates>,
+    ) -> Result<Url, GoogleError> {
+        let mut segments = vec!["calendars", calendar_id, "events"];
+        segments.extend_from_slice(tail);
+        let mut url = join(&self.endpoints.calendar, &segments)?;
+        if let Some(send_updates) = send_updates {
+            // conferenceDataVersion=1 lets a write add or remove a Meet link
+            // and keeps existing conference data otherwise; supportsAttachments
+            // says attachments in a body are meant, not forgotten.
+            url.query_pairs_mut()
+                .append_pair("sendUpdates", send_updates.as_str())
+                .append_pair("conferenceDataVersion", "1")
+                .append_pair("supportsAttachments", "true");
+        }
+        Ok(url)
+    }
+
+    pub async fn get_event(
+        &self,
+        calendar_id: &str,
+        event_id: &str,
+    ) -> Result<Item<EventFields>, GoogleError> {
+        let url = self.event_url(calendar_id, &[event_id], None)?;
+        Item::from_value(self.get_json(url).await?)
+    }
+
+    /// `events.insert`. With an `id` in `body`, inserting the same body twice
+    /// fails the second time with [`GoogleError::Conflict`].
+    pub async fn insert_event(
+        &self,
+        calendar_id: &str,
+        body: &Value,
+        send_updates: SendUpdates,
+    ) -> Result<Item<EventFields>, GoogleError> {
+        let url = self.event_url(calendar_id, &[], Some(send_updates))?;
+        event_from(self.send_json(Method::POST, url, Some(body), None).await?)
+    }
+
+    /// `events.patch`: only the fields in `patch` change. A `null` clears a
+    /// field. With `if_match`, fails with [`GoogleError::PreconditionFailed`]
+    /// when the event changed since that etag.
+    pub async fn patch_event(
+        &self,
+        calendar_id: &str,
+        event_id: &str,
+        patch: &Value,
+        if_match: Option<&str>,
+        send_updates: SendUpdates,
+    ) -> Result<Item<EventFields>, GoogleError> {
+        let url = self.event_url(calendar_id, &[event_id], Some(send_updates))?;
+        event_from(
+            self.send_json(Method::PATCH, url, Some(patch), if_match)
+                .await?,
+        )
+    }
+
+    /// `events.delete`. Deleting an event that is already gone fails with
+    /// [`GoogleError::Gone`] or [`GoogleError::NotFound`].
+    pub async fn delete_event(
+        &self,
+        calendar_id: &str,
+        event_id: &str,
+        if_match: Option<&str>,
+        send_updates: SendUpdates,
+    ) -> Result<(), GoogleError> {
+        let mut url = join(
+            &self.endpoints.calendar,
+            &["calendars", calendar_id, "events", event_id],
+        )?;
+        url.query_pairs_mut()
+            .append_pair("sendUpdates", send_updates.as_str());
+        self.send_json(Method::DELETE, url, None, if_match).await?;
+        Ok(())
+    }
+
+    /// `events.move`: changes which calendar of the same account organizes
+    /// the event. Returns the event as it is in `destination`.
+    pub async fn move_event(
+        &self,
+        calendar_id: &str,
+        event_id: &str,
+        destination: &str,
+        send_updates: SendUpdates,
+    ) -> Result<Item<EventFields>, GoogleError> {
+        let mut url = join(
+            &self.endpoints.calendar,
+            &["calendars", calendar_id, "events", event_id, "move"],
+        )?;
+        url.query_pairs_mut()
+            .append_pair("destination", destination)
+            .append_pair("sendUpdates", send_updates.as_str());
+        event_from(self.send_json(Method::POST, url, None, None).await?)
+    }
+}
+
+fn event_from(body: Option<Value>) -> Result<Item<EventFields>, GoogleError> {
+    Item::from_value(body.ok_or_else(|| GoogleError::Decode("empty response body".into()))?)
 }
 
 /// Appends path segments to a base ending in `/`. Segments are percent-encoded,
