@@ -138,10 +138,7 @@ impl Store {
         event_id: &str,
         instance: Option<(&str, When)>,
     ) -> Result<ChangeSet, StoreError> {
-        let cancelled = match (
-            self.event_raw(account_id, calendar_id, event_id)?,
-            instance,
-        ) {
+        let cancelled = match (self.event_raw(account_id, calendar_id, event_id)?, instance) {
             (Some(mut raw), _) => {
                 raw["status"] = "cancelled".into();
                 raw

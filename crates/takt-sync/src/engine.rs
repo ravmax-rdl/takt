@@ -1,14 +1,17 @@
 //! One sync round for one account, and what to do when Google says no.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use futures::stream::{self, StreamExt};
-use takt_google::{GoogleClient, GoogleError};
+use serde_json::Value;
+use takt_google::model::{EventFields, Item};
+use takt_google::{GoogleClient, GoogleError, SendUpdates, new_event_id};
 use takt_store::{ChangeSet, Store, StoreError};
 
-use crate::SyncEvent;
+use crate::{SyncEvent, WriteError, WriteOp, WriteOutcome, WriteRequest};
 
 pub const PARALLEL_CALENDARS: usize = 4;
 
@@ -85,6 +88,11 @@ pub struct AccountEngine {
     store: Arc<Mutex<Store>>,
     events: async_channel::Sender<SyncEvent>,
     meta_synced_at: Mutex<Option<Instant>>,
+    /// One lock per calendar, held while a page of its events is fetched and
+    /// stored and while a write to it runs. Without it a page fetched before
+    /// a write could be stored after the write's result and undo it on screen
+    /// until the next round.
+    calendar_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl AccountEngine {
@@ -100,7 +108,17 @@ impl AccountEngine {
             store,
             events,
             meta_synced_at: Mutex::new(None),
+            calendar_locks: Mutex::default(),
         }
+    }
+
+    fn calendar_lock(&self, calendar_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.calendar_locks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(calendar_id.to_owned())
+            .or_default()
+            .clone()
     }
 
     pub fn account_id(&self) -> &str {
@@ -241,6 +259,8 @@ impl AccountEngine {
             let token = self.with_store(|s| s.events_sync_token(&self.account_id, calendar_id))?;
             let mut page_token: Option<String> = None;
             loop {
+                let lock = self.calendar_lock(calendar_id);
+                let _held = lock.lock().await;
                 match self
                     .client
                     .events_page(calendar_id, token.as_deref(), page_token.as_deref())
@@ -357,6 +377,205 @@ impl AccountEngine {
         }
     }
 
+    /// Sends one change to Google and stores what Google answers, so the UI
+    /// shows the result without waiting for the next round.
+    pub async fn write(&self, request: &WriteRequest) -> Result<WriteOutcome, WriteError> {
+        let calendar_id = request.calendar_id.as_str();
+        let send = if request.notify_guests {
+            SendUpdates::All
+        } else {
+            SendUpdates::None
+        };
+        // Always in the same order, so two writes cannot wait on each other.
+        let mut calendars = vec![calendar_id];
+        if let WriteOp::Update {
+            move_to: Some(destination),
+            ..
+        } = &request.op
+        {
+            calendars.push(destination);
+        }
+        calendars.sort_unstable();
+        calendars.dedup();
+        let locks: Vec<_> = calendars.iter().map(|id| self.calendar_lock(id)).collect();
+        let mut held = Vec::with_capacity(locks.len());
+        for lock in &locks {
+            held.push(lock.lock().await);
+        }
+
+        match &request.op {
+            WriteOp::Create { body } => {
+                let mut body = body.clone();
+                if !body.is_object() {
+                    return Err(WriteError::Rejected(
+                        "the new event is not an object".into(),
+                    ));
+                }
+                if body.get("id").and_then(Value::as_str).is_none() {
+                    body["id"] = new_event_id().into();
+                }
+                let id = body["id"].as_str().unwrap_or_default().to_owned();
+                let created = match self.client.insert_event(calendar_id, &body, send).await {
+                    Ok(created) => created,
+                    // The ID is ours and new, so it can only exist because an
+                    // earlier attempt of this same insert reached Google.
+                    Err(GoogleError::Conflict) => self
+                        .client
+                        .get_event(calendar_id, &id)
+                        .await
+                        .map_err(write_error)?,
+                    Err(error) => return Err(write_error(error)),
+                };
+                self.store_written(calendar_id, &created)?;
+                Ok(WriteOutcome {
+                    calendar_id: calendar_id.to_owned(),
+                    event_id: created.fields.id,
+                })
+            }
+            WriteOp::Update {
+                event_id,
+                etag,
+                patch,
+                base,
+                move_to,
+            } => {
+                if patch.as_object().is_some_and(|fields| !fields.is_empty()) {
+                    self.patch(calendar_id, event_id, patch, base, etag.as_deref(), send)
+                        .await?;
+                }
+                let Some(destination) = move_to.as_deref().filter(|d| *d != calendar_id) else {
+                    return Ok(WriteOutcome {
+                        calendar_id: calendar_id.to_owned(),
+                        event_id: event_id.clone(),
+                    });
+                };
+                let moved = self
+                    .client
+                    .move_event(calendar_id, event_id, destination, send)
+                    .await
+                    .map_err(|error| self.failed(error, calendar_id, event_id))?;
+                self.record_delete(calendar_id, event_id, None)?;
+                self.store_written(destination, &moved)?;
+                Ok(WriteOutcome {
+                    calendar_id: destination.to_owned(),
+                    event_id: moved.fields.id,
+                })
+            }
+            WriteOp::Delete { event_id, instance } => {
+                match self
+                    .client
+                    .delete_event(calendar_id, event_id, None, send)
+                    .await
+                {
+                    // Already deleted elsewhere: the same end state.
+                    Ok(()) | Err(GoogleError::Gone | GoogleError::NotFound) => {}
+                    Err(error) => return Err(write_error(error)),
+                }
+                let instance = instance
+                    .as_ref()
+                    .map(|i| (i.series_id.as_str(), i.original_start));
+                self.record_delete(calendar_id, event_id, instance)?;
+                Ok(WriteOutcome {
+                    calendar_id: calendar_id.to_owned(),
+                    event_id: event_id.clone(),
+                })
+            }
+        }
+    }
+
+    /// `events.patch` guarded by the etag the edit started from. When Google
+    /// has a newer version, its copy is stored, and the patch is sent again
+    /// against it only if nobody else changed the fields being written.
+    async fn patch(
+        &self,
+        calendar_id: &str,
+        event_id: &str,
+        patch: &Value,
+        base: &Value,
+        etag: Option<&str>,
+        send: SendUpdates,
+    ) -> Result<(), WriteError> {
+        let first = self
+            .client
+            .patch_event(calendar_id, event_id, patch, etag, send)
+            .await;
+        let error = match first {
+            Ok(updated) => return self.store_written(calendar_id, &updated),
+            Err(error) => error,
+        };
+        if !matches!(error, GoogleError::PreconditionFailed) {
+            return Err(self.failed(error, calendar_id, event_id));
+        }
+        let remote = self
+            .client
+            .get_event(calendar_id, event_id)
+            .await
+            .map_err(|error| self.failed(error, calendar_id, event_id))?;
+        self.store_written(calendar_id, &remote)?;
+        if remote.fields.is_cancelled() {
+            return Err(WriteError::Gone);
+        }
+        if includes(&remote.raw, patch) {
+            // Google already has these values (the first attempt landed, or
+            // someone made the same change).
+            return Ok(());
+        }
+        if !untouched(patch, base, &remote.raw) {
+            return Err(WriteError::Conflict);
+        }
+        let again = self
+            .client
+            .patch_event(
+                calendar_id,
+                event_id,
+                patch,
+                remote.fields.etag.as_deref(),
+                send,
+            )
+            .await;
+        match again {
+            Ok(updated) => self.store_written(calendar_id, &updated),
+            Err(error) => Err(self.failed(error, calendar_id, event_id)),
+        }
+    }
+
+    fn store_written(
+        &self,
+        calendar_id: &str,
+        event: &Item<EventFields>,
+    ) -> Result<(), WriteError> {
+        let changes = self
+            .with_store(|s| s.apply_event(&self.account_id, calendar_id, event))
+            .map_err(cache_error)?;
+        self.emit(changes);
+        Ok(())
+    }
+
+    fn record_delete(
+        &self,
+        calendar_id: &str,
+        event_id: &str,
+        instance: Option<(&str, takt_store::When)>,
+    ) -> Result<(), WriteError> {
+        let changes = self
+            .with_store(|s| s.mark_event_deleted(&self.account_id, calendar_id, event_id, instance))
+            .map_err(cache_error)?;
+        self.emit(changes);
+        Ok(())
+    }
+
+    /// The error to report for a failed write to an existing event. An event
+    /// Google no longer has is removed from the cache on the way.
+    fn failed(&self, error: GoogleError, calendar_id: &str, event_id: &str) -> WriteError {
+        let error = write_error(error);
+        if error == WriteError::Gone
+            && let Err(error) = self.record_delete(calendar_id, event_id, None)
+        {
+            tracing::warn!(account = %self.account_id, %error, "cannot drop a deleted event");
+        }
+        error
+    }
+
     fn with_store<T>(
         &self,
         f: impl FnOnce(&mut Store) -> Result<T, StoreError>,
@@ -382,9 +601,83 @@ impl AccountEngine {
     }
 }
 
+fn write_error(error: GoogleError) -> WriteError {
+    match error {
+        GoogleError::Network(_) => WriteError::Offline,
+        GoogleError::InvalidGrant => WriteError::NotSignedIn,
+        GoogleError::NotFound | GoogleError::Gone => WriteError::Gone,
+        GoogleError::PreconditionFailed => WriteError::Conflict,
+        GoogleError::Forbidden { reason } => {
+            WriteError::Rejected(format!("Google does not allow this change ({reason})"))
+        }
+        other => WriteError::Rejected(other.to_string()),
+    }
+}
+
+/// Google took the write but the cache did not; the next round repairs it.
+fn cache_error(error: SyncError) -> WriteError {
+    WriteError::Rejected(format!(
+        "saved in Google, but the local cache could not be updated: {error}"
+    ))
+}
+
+/// Whether `remote` already holds everything `patch` would set. In a patch
+/// a `null` means "absent".
+fn includes(remote: &Value, patch: &Value) -> bool {
+    match patch {
+        Value::Null => remote.is_null(),
+        Value::Object(fields) => fields
+            .iter()
+            .all(|(key, value)| includes(remote.get(key).unwrap_or(&Value::Null), value)),
+        other => remote == other,
+    }
+}
+
+/// Whether every top-level field `patch` writes is the same in `remote` as
+/// it was in `base`, i.e. nobody else changed what this patch changes.
+fn untouched(patch: &Value, base: &Value, remote: &Value) -> bool {
+    patch.as_object().is_some_and(|fields| {
+        fields.keys().all(|key| {
+            base.get(key).unwrap_or(&Value::Null) == remote.get(key).unwrap_or(&Value::Null)
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
+
+    #[test]
+    fn a_patch_is_included_when_google_already_has_its_values() {
+        let remote = json!({"summary": "Lunch", "start": {"dateTime": "2026-10-19T12:00:00Z"}});
+        assert!(includes(&remote, &json!({"summary": "Lunch"})));
+        assert!(includes(&remote, &json!({"location": null})));
+        assert!(includes(
+            &remote,
+            &json!({"start": {"dateTime": "2026-10-19T12:00:00Z", "date": null}})
+        ));
+        assert!(!includes(&remote, &json!({"summary": "Dinner"})));
+        assert!(!includes(&remote, &json!({"summary": null})));
+        assert!(!includes(
+            &remote,
+            &json!({"start": {"date": "2026-10-19"}})
+        ));
+    }
+
+    #[test]
+    fn untouched_looks_only_at_the_patched_fields() {
+        let base = json!({"summary": "Lunch", "location": null});
+        let patch = json!({"summary": "Late lunch", "location": "Cafe"});
+        let elsewhere = json!({"summary": "Lunch", "description": "new notes"});
+        assert!(untouched(&patch, &base, &elsewhere));
+        let same_field = json!({"summary": "Brunch"});
+        assert!(!untouched(&patch, &base, &same_field));
+        let location_added = json!({"summary": "Lunch", "location": "Office"});
+        assert!(!untouched(&patch, &base, &location_added));
+        assert!(!untouched(&json!("not an object"), &base, &elsewhere));
+    }
 
     fn http(status: u16) -> SyncError {
         GoogleError::Http {

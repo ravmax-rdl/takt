@@ -50,14 +50,19 @@ fn october(store: &Store) -> Vec<Occurrence> {
 #[test]
 fn a_written_event_is_stored_and_keeps_the_sync_token() {
     let mut store = seeded();
-    store.apply_events_page("acc", "cal", &[], Some("t0")).unwrap();
+    store
+        .apply_events_page("acc", "cal", &[], Some("t0"))
+        .unwrap();
     let changes = store.apply_event("acc", "cal", &ev(standup())).unwrap();
     assert!(changes.calendars.contains("cal"));
     assert_eq!(
         store.events_sync_token("acc", "cal").unwrap().as_deref(),
         Some("t0")
     );
-    assert_eq!(store.event_raw("acc", "cal", "s1").unwrap(), Some(standup()));
+    assert_eq!(
+        store.event_raw("acc", "cal", "s1").unwrap(),
+        Some(standup())
+    );
 }
 
 #[test]
@@ -77,9 +82,7 @@ fn a_moved_event_reports_both_its_old_and_new_time() {
 fn deleting_a_single_event_removes_its_row() {
     let mut store = seeded();
     store.apply_event("acc", "cal", &ev(standup())).unwrap();
-    let changes = store
-        .mark_event_deleted("acc", "cal", "s1", None)
-        .unwrap();
+    let changes = store.mark_event_deleted("acc", "cal", "s1", None).unwrap();
     assert!(changes.calendars.contains("cal"));
     assert!(store.event_ids("acc", "cal").unwrap().is_empty());
 }
@@ -96,7 +99,9 @@ fn deleting_an_unknown_event_changes_nothing() {
 #[test]
 fn deleting_a_generated_occurrence_leaves_a_cancelled_exception() {
     let mut store = seeded();
-    store.apply_event("acc", "cal", &ev(weekly_master())).unwrap();
+    store
+        .apply_event("acc", "cal", &ev(weekly_master()))
+        .unwrap();
     assert_eq!(october(&store).len(), 4);
 
     let original = When::At(Utc.with_ymd_and_hms(2026, 10, 12, 9, 0, 0).unwrap());
@@ -106,7 +111,11 @@ fn deleting_a_generated_occurrence_leaves_a_cancelled_exception() {
     let left: Vec<_> = october(&store).into_iter().map(|o| o.instance_id).collect();
     assert_eq!(
         left,
-        ["m_20261005T090000Z", "m_20261019T090000Z", "m_20261026T100000Z"]
+        [
+            "m_20261005T090000Z",
+            "m_20261019T090000Z",
+            "m_20261026T100000Z"
+        ]
     );
     assert_eq!(
         store.event_ids("acc", "cal").unwrap(),
