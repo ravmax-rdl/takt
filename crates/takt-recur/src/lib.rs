@@ -1,0 +1,266 @@
+//! Expands Google Calendar recurring series into occurrences.
+//!
+//! Pure functions: no I/O and no clock. All-day dates compare as UTC midnight
+//! here. Callers that need display-time-zone precision pad the range by a day
+//! and filter the result.
+
+mod normalize;
+
+use chrono::{DateTime, NaiveDate, NaiveTime, TimeDelta, Utc};
+use chrono_tz::Tz;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum When {
+    At(DateTime<Utc>),
+    Date(NaiveDate),
+}
+
+impl When {
+    pub fn as_utc(&self) -> DateTime<Utc> {
+        match self {
+            When::At(t) => *t,
+            When::Date(d) => d.and_time(NaiveTime::MIN).and_utc(),
+        }
+    }
+
+    pub fn is_all_day(&self) -> bool {
+        matches!(self, When::Date(_))
+    }
+}
+
+/// Half-open interval `[start, end)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Range {
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
+}
+
+impl Range {
+    /// True when `[start, end)` intersects the range. A zero-length item counts
+    /// when it sits inside the range.
+    pub fn overlaps(&self, start: &When, end: &When) -> bool {
+        let (s, e) = (start.as_utc(), end.as_utc());
+        s < self.end && (e > self.start || (s == e && s >= self.start))
+    }
+}
+
+/// The first event of a series, as Google stores it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Master {
+    pub id: String,
+    pub start: When,
+    pub end: When,
+    /// IANA zone from `start.timeZone`. Unused for all-day series.
+    pub tz: Tz,
+    /// `recurrence` lines exactly as Google sent them.
+    pub recurrence: Vec<String>,
+}
+
+/// A changed or cancelled occurrence of a series.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Exception {
+    pub id: String,
+    pub original_start: When,
+    pub cancelled: bool,
+    pub start: When,
+    pub end: When,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    Generated,
+    Exception,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Occurrence {
+    pub instance_id: String,
+    pub source: Source,
+    pub original_start: When,
+    pub start: When,
+    pub end: When,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RecurError {
+    #[error("cannot parse recurrence: {0}")]
+    Parse(String),
+    #[error("series start and end disagree on all-day vs timed")]
+    MixedStartEnd,
+}
+
+pub const MAX_OCCURRENCES: u16 = 10_000;
+
+/// Google's ID for one occurrence of a series.
+pub fn instance_id(master_id: &str, original_start: &When) -> String {
+    match original_start {
+        When::At(t) => format!("{master_id}_{}", t.format("%Y%m%dT%H%M%SZ")),
+        When::Date(d) => format!("{master_id}_{}", d.format("%Y%m%d")),
+    }
+}
+
+pub fn expand(
+    master: &Master,
+    exceptions: &[Exception],
+    range: &Range,
+) -> Result<Vec<Occurrence>, RecurError> {
+    let all_day = series_kind(master)?;
+    let duration = master.end.as_utc() - master.start.as_utc();
+    let (set, start) = parse_set(master, all_day)?;
+    let after = to_rrule_tz(range.start - duration - start.lead() - TimeDelta::seconds(1));
+    let before = to_rrule_tz(range.end);
+    let mut originals: Vec<When> = set
+        .after(after)
+        .before(before)
+        .all(MAX_OCCURRENCES)
+        .dates
+        .into_iter()
+        .filter_map(|dt| start.actual(dt))
+        .map(|t| original_of(t, all_day))
+        .collect();
+    // An RDATE can repeat a generated date; each instance ID appears once.
+    originals.sort();
+    originals.dedup();
+    let mut out: Vec<Occurrence> = originals
+        .into_iter()
+        // Any exception, cancelled or moved, replaces the generated occurrence.
+        .filter(|original| !exceptions.iter().any(|e| e.original_start == *original))
+        .map(|original| Occurrence {
+            instance_id: instance_id(&master.id, &original),
+            source: Source::Generated,
+            original_start: original,
+            start: original,
+            end: shift(&original, duration),
+        })
+        .filter(|o| range.overlaps(&o.start, &o.end))
+        .collect();
+    out.extend(
+        exceptions
+            .iter()
+            .filter(|e| !e.cancelled && range.overlaps(&e.start, &e.end))
+            .map(|e| Occurrence {
+                instance_id: e.id.clone(),
+                source: Source::Exception,
+                original_start: e.original_start,
+                start: e.start,
+                end: e.end,
+            }),
+    );
+    sort(&mut out);
+    Ok(out)
+}
+
+/// End of the series' last occurrence, or `None` when it never ends, has
+/// [`MAX_OCCURRENCES`] or more occurrences, or iteration hit the `rrule`
+/// loop limit (callers treat all of these the same way).
+pub fn series_end(master: &Master) -> Result<Option<When>, RecurError> {
+    let all_day = series_kind(master)?;
+    let (set, start) = parse_set(master, all_day)?;
+    let bounded = master
+        .recurrence
+        .iter()
+        .map(|line| line.trim().to_ascii_uppercase())
+        .filter(|line| line.starts_with("RRULE"))
+        .all(|line| line.contains("UNTIL=") || line.contains("COUNT="));
+    if !bounded {
+        return Ok(None);
+    }
+    let duration = master.end.as_utc() - master.start.as_utc();
+    let result = set.all(MAX_OCCURRENCES);
+    if result.limited {
+        return Ok(None);
+    }
+    let last = result
+        .dates
+        .into_iter()
+        .rev()
+        .find_map(|dt| start.actual(dt));
+    Ok(Some(match last {
+        Some(t) => shift(&original_of(t, all_day), duration),
+        None => master.end,
+    }))
+}
+
+fn series_kind(master: &Master) -> Result<bool, RecurError> {
+    match (&master.start, &master.end) {
+        (When::At(_), When::At(_)) => Ok(false),
+        (When::Date(_), When::Date(_)) => Ok(true),
+        _ => Err(RecurError::MixedStartEnd),
+    }
+}
+
+/// Where `rrule` starts the series versus where the master really starts.
+/// They differ only for a start in the repeated hour of a DST fall-back (see
+/// [`normalize::rule_start`]).
+#[derive(Clone, Copy)]
+struct Start {
+    rule: DateTime<Utc>,
+    real: DateTime<Utc>,
+    /// An EXDATE names the real start, which `rrule` cannot match itself.
+    real_excluded: bool,
+}
+
+impl Start {
+    /// How far the `rrule` start sits before the real one.
+    fn lead(&self) -> TimeDelta {
+        self.real - self.rule
+    }
+
+    /// The occurrence an `rrule` date stands for, or `None` when excluded.
+    fn actual(&self, dt: DateTime<rrule::Tz>) -> Option<DateTime<Utc>> {
+        let t = dt.with_timezone(&Utc);
+        if t != self.rule {
+            Some(t)
+        } else if self.real_excluded {
+            None
+        } else {
+            Some(self.real)
+        }
+    }
+}
+
+fn parse_set(master: &Master, all_day: bool) -> Result<(rrule::RRuleSet, Start), RecurError> {
+    let rule_start = normalize::rule_start(master)?;
+    let set = rrule::RRuleSet::new(rule_start)
+        .set_from_string(&normalize::recurrence_text(master, all_day))
+        .map_err(|e| RecurError::Parse(e.to_string()))?;
+    let rule = rule_start.with_timezone(&Utc);
+    let real = master.start.as_utc();
+    let real_excluded = rule != real && set.get_exdate().iter().any(|d| *d == real);
+    Ok((
+        set,
+        Start {
+            rule,
+            real,
+            real_excluded,
+        },
+    ))
+}
+
+fn to_rrule_tz(t: DateTime<Utc>) -> DateTime<rrule::Tz> {
+    t.with_timezone(&rrule::Tz::UTC)
+}
+
+fn original_of(t: DateTime<Utc>, all_day: bool) -> When {
+    if all_day {
+        When::Date(t.date_naive())
+    } else {
+        When::At(t)
+    }
+}
+
+fn shift(start: &When, duration: TimeDelta) -> When {
+    match start {
+        When::At(t) => When::At(*t + duration),
+        When::Date(d) => When::Date(*d + TimeDelta::days(duration.num_days())),
+    }
+}
+
+fn sort(occurrences: &mut [Occurrence]) {
+    occurrences.sort_by(|a, b| {
+        a.start
+            .as_utc()
+            .cmp(&b.start.as_utc())
+            .then_with(|| a.instance_id.cmp(&b.instance_id))
+    });
+}

@@ -1,0 +1,345 @@
+{
+  "name": "monthly-3rd-tue",
+  "range": {
+    "start": "2026-01-01T00:00:00+00:00",
+    "end": "2028-01-01T00:00:00+00:00"
+  },
+  "calendarTimeZone": "UTC",
+  "master": {
+    "kind": "calendar#event",
+    "id": "1jknurqh66fdiof2iletriocn6",
+    "status": "confirmed",
+    "summary": "monthly-3rd-tue",
+    "start": {
+      "dateTime": "2026-10-20T10:00:00Z",
+      "timeZone": "UTC"
+    },
+    "end": {
+      "dateTime": "2026-10-20T11:00:00Z",
+      "timeZone": "UTC"
+    },
+    "recurrence": [
+      "RRULE:FREQ=MONTHLY;BYDAY=3TU"
+    ],
+    "iCalUID": "1jknurqh66fdiof2iletriocn6@google.com",
+    "eventType": "default"
+  },
+  "exceptions": [],
+  "instances": [
+    {
+      "kind": "calendar#event",
+      "id": "1jknurqh66fdiof2iletriocn6_20261020T100000Z",
+      "status": "confirmed",
+      "summary": "monthly-3rd-tue",
+      "start": {
+        "dateTime": "2026-10-20T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-20T11:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1jknurqh66fdiof2iletriocn6",
+      "originalStartTime": {
+        "dateTime": "2026-10-20T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1jknurqh66fdiof2iletriocn6@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "1jknurqh66fdiof2iletriocn6_20261117T100000Z",
+      "status": "confirmed",
+      "summary": "monthly-3rd-tue",
+      "start": {
+        "dateTime": "2026-11-17T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-17T11:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1jknurqh66fdiof2iletriocn6",
+      "originalStartTime": {
+        "dateTime": "2026-11-17T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1jknurqh66fdiof2iletriocn6@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "1jknurqh66fdiof2iletriocn6_20261215T100000Z",
+      "status": "confirmed",
+      "summary": "monthly-3rd-tue",
+      "start": {
+        "dateTime": "2026-12-15T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-12-15T11:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1jknurqh66fdiof2iletriocn6",
+      "originalStartTime": {
+        "dateTime": "2026-12-15T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1jknurqh66fdiof2iletriocn6@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "1jknurqh66fdiof2iletriocn6_20270119T100000Z",
+      "status": "confirmed",
+      "summary": "monthly-3rd-tue",
+      "start": {
+        "dateTime": "2027-01-19T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2027-01-19T11:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1jknurqh66fdiof2iletriocn6",
+      "originalStartTime": {
+        "dateTime": "2027-01-19T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1jknurqh66fdiof2iletriocn6@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "1jknurqh66fdiof2iletriocn6_20270216T100000Z",
+      "status": "confirmed",
+      "summary": "monthly-3rd-tue",
+      "start": {
+        "dateTime": "2027-02-16T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2027-02-16T11:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1jknurqh66fdiof2iletriocn6",
+      "originalStartTime": {
+        "dateTime": "2027-02-16T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1jknurqh66fdiof2iletriocn6@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "1jknurqh66fdiof2iletriocn6_20270316T100000Z",
+      "status": "confirmed",
+      "summary": "monthly-3rd-tue",
+      "start": {
+        "dateTime": "2027-03-16T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2027-03-16T11:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1jknurqh66fdiof2iletriocn6",
+      "originalStartTime": {
+        "dateTime": "2027-03-16T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1jknurqh66fdiof2iletriocn6@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "1jknurqh66fdiof2iletriocn6_20270420T100000Z",
+      "status": "confirmed",
+      "summary": "monthly-3rd-tue",
+      "start": {
+        "dateTime": "2027-04-20T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2027-04-20T11:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1jknurqh66fdiof2iletriocn6",
+      "originalStartTime": {
+        "dateTime": "2027-04-20T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1jknurqh66fdiof2iletriocn6@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "1jknurqh66fdiof2iletriocn6_20270518T100000Z",
+      "status": "confirmed",
+      "summary": "monthly-3rd-tue",
+      "start": {
+        "dateTime": "2027-05-18T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2027-05-18T11:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1jknurqh66fdiof2iletriocn6",
+      "originalStartTime": {
+        "dateTime": "2027-05-18T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1jknurqh66fdiof2iletriocn6@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "1jknurqh66fdiof2iletriocn6_20270615T100000Z",
+      "status": "confirmed",
+      "summary": "monthly-3rd-tue",
+      "start": {
+        "dateTime": "2027-06-15T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2027-06-15T11:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1jknurqh66fdiof2iletriocn6",
+      "originalStartTime": {
+        "dateTime": "2027-06-15T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1jknurqh66fdiof2iletriocn6@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "1jknurqh66fdiof2iletriocn6_20270720T100000Z",
+      "status": "confirmed",
+      "summary": "monthly-3rd-tue",
+      "start": {
+        "dateTime": "2027-07-20T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2027-07-20T11:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1jknurqh66fdiof2iletriocn6",
+      "originalStartTime": {
+        "dateTime": "2027-07-20T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1jknurqh66fdiof2iletriocn6@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "1jknurqh66fdiof2iletriocn6_20270817T100000Z",
+      "status": "confirmed",
+      "summary": "monthly-3rd-tue",
+      "start": {
+        "dateTime": "2027-08-17T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2027-08-17T11:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1jknurqh66fdiof2iletriocn6",
+      "originalStartTime": {
+        "dateTime": "2027-08-17T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1jknurqh66fdiof2iletriocn6@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "1jknurqh66fdiof2iletriocn6_20270921T100000Z",
+      "status": "confirmed",
+      "summary": "monthly-3rd-tue",
+      "start": {
+        "dateTime": "2027-09-21T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2027-09-21T11:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1jknurqh66fdiof2iletriocn6",
+      "originalStartTime": {
+        "dateTime": "2027-09-21T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1jknurqh66fdiof2iletriocn6@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "1jknurqh66fdiof2iletriocn6_20271019T100000Z",
+      "status": "confirmed",
+      "summary": "monthly-3rd-tue",
+      "start": {
+        "dateTime": "2027-10-19T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2027-10-19T11:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1jknurqh66fdiof2iletriocn6",
+      "originalStartTime": {
+        "dateTime": "2027-10-19T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1jknurqh66fdiof2iletriocn6@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "1jknurqh66fdiof2iletriocn6_20271116T100000Z",
+      "status": "confirmed",
+      "summary": "monthly-3rd-tue",
+      "start": {
+        "dateTime": "2027-11-16T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2027-11-16T11:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1jknurqh66fdiof2iletriocn6",
+      "originalStartTime": {
+        "dateTime": "2027-11-16T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1jknurqh66fdiof2iletriocn6@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "1jknurqh66fdiof2iletriocn6_20271221T100000Z",
+      "status": "confirmed",
+      "summary": "monthly-3rd-tue",
+      "start": {
+        "dateTime": "2027-12-21T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2027-12-21T11:00:00Z",
+        "timeZone": "UTC"
+      },
+      "recurringEventId": "1jknurqh66fdiof2iletriocn6",
+      "originalStartTime": {
+        "dateTime": "2027-12-21T10:00:00Z",
+        "timeZone": "UTC"
+      },
+      "iCalUID": "1jknurqh66fdiof2iletriocn6@google.com",
+      "eventType": "default"
+    }
+  ]
+}

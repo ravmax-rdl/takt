@@ -1,0 +1,172 @@
+{
+  "name": "all-day",
+  "range": {
+    "start": "2026-01-01T00:00:00+00:00",
+    "end": "2028-01-01T00:00:00+00:00"
+  },
+  "calendarTimeZone": "UTC",
+  "master": {
+    "kind": "calendar#event",
+    "id": "62ccgk8qn3b4jfktjh95815pt4",
+    "status": "confirmed",
+    "summary": "all-day",
+    "start": {
+      "date": "2026-10-20"
+    },
+    "end": {
+      "date": "2026-10-21"
+    },
+    "recurrence": [
+      "RRULE:FREQ=WEEKLY;WKST=SU;COUNT=8;BYDAY=TU"
+    ],
+    "iCalUID": "62ccgk8qn3b4jfktjh95815pt4@google.com",
+    "eventType": "default"
+  },
+  "exceptions": [],
+  "instances": [
+    {
+      "kind": "calendar#event",
+      "id": "62ccgk8qn3b4jfktjh95815pt4_20261020",
+      "status": "confirmed",
+      "summary": "all-day",
+      "start": {
+        "date": "2026-10-20"
+      },
+      "end": {
+        "date": "2026-10-21"
+      },
+      "recurringEventId": "62ccgk8qn3b4jfktjh95815pt4",
+      "originalStartTime": {
+        "date": "2026-10-20"
+      },
+      "iCalUID": "62ccgk8qn3b4jfktjh95815pt4@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "62ccgk8qn3b4jfktjh95815pt4_20261027",
+      "status": "confirmed",
+      "summary": "all-day",
+      "start": {
+        "date": "2026-10-27"
+      },
+      "end": {
+        "date": "2026-10-28"
+      },
+      "recurringEventId": "62ccgk8qn3b4jfktjh95815pt4",
+      "originalStartTime": {
+        "date": "2026-10-27"
+      },
+      "iCalUID": "62ccgk8qn3b4jfktjh95815pt4@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "62ccgk8qn3b4jfktjh95815pt4_20261103",
+      "status": "confirmed",
+      "summary": "all-day",
+      "start": {
+        "date": "2026-11-03"
+      },
+      "end": {
+        "date": "2026-11-04"
+      },
+      "recurringEventId": "62ccgk8qn3b4jfktjh95815pt4",
+      "originalStartTime": {
+        "date": "2026-11-03"
+      },
+      "iCalUID": "62ccgk8qn3b4jfktjh95815pt4@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "62ccgk8qn3b4jfktjh95815pt4_20261110",
+      "status": "confirmed",
+      "summary": "all-day",
+      "start": {
+        "date": "2026-11-10"
+      },
+      "end": {
+        "date": "2026-11-11"
+      },
+      "recurringEventId": "62ccgk8qn3b4jfktjh95815pt4",
+      "originalStartTime": {
+        "date": "2026-11-10"
+      },
+      "iCalUID": "62ccgk8qn3b4jfktjh95815pt4@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "62ccgk8qn3b4jfktjh95815pt4_20261117",
+      "status": "confirmed",
+      "summary": "all-day",
+      "start": {
+        "date": "2026-11-17"
+      },
+      "end": {
+        "date": "2026-11-18"
+      },
+      "recurringEventId": "62ccgk8qn3b4jfktjh95815pt4",
+      "originalStartTime": {
+        "date": "2026-11-17"
+      },
+      "iCalUID": "62ccgk8qn3b4jfktjh95815pt4@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "62ccgk8qn3b4jfktjh95815pt4_20261124",
+      "status": "confirmed",
+      "summary": "all-day",
+      "start": {
+        "date": "2026-11-24"
+      },
+      "end": {
+        "date": "2026-11-25"
+      },
+      "recurringEventId": "62ccgk8qn3b4jfktjh95815pt4",
+      "originalStartTime": {
+        "date": "2026-11-24"
+      },
+      "iCalUID": "62ccgk8qn3b4jfktjh95815pt4@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "62ccgk8qn3b4jfktjh95815pt4_20261201",
+      "status": "confirmed",
+      "summary": "all-day",
+      "start": {
+        "date": "2026-12-01"
+      },
+      "end": {
+        "date": "2026-12-02"
+      },
+      "recurringEventId": "62ccgk8qn3b4jfktjh95815pt4",
+      "originalStartTime": {
+        "date": "2026-12-01"
+      },
+      "iCalUID": "62ccgk8qn3b4jfktjh95815pt4@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "62ccgk8qn3b4jfktjh95815pt4_20261208",
+      "status": "confirmed",
+      "summary": "all-day",
+      "start": {
+        "date": "2026-12-08"
+      },
+      "end": {
+        "date": "2026-12-09"
+      },
+      "recurringEventId": "62ccgk8qn3b4jfktjh95815pt4",
+      "originalStartTime": {
+        "date": "2026-12-08"
+      },
+      "iCalUID": "62ccgk8qn3b4jfktjh95815pt4@google.com",
+      "eventType": "default"
+    }
+  ]
+}

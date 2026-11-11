@@ -1,0 +1,198 @@
+{
+  "name": "other-tz",
+  "range": {
+    "start": "2026-01-01T00:00:00+00:00",
+    "end": "2028-01-01T00:00:00+00:00"
+  },
+  "calendarTimeZone": "UTC",
+  "master": {
+    "kind": "calendar#event",
+    "id": "138e0ik8hse16rq3597djii23c",
+    "status": "confirmed",
+    "summary": "other-tz",
+    "start": {
+      "dateTime": "2026-10-11T10:00:00Z",
+      "timeZone": "Europe/London"
+    },
+    "end": {
+      "dateTime": "2026-10-11T11:00:00Z",
+      "timeZone": "Europe/London"
+    },
+    "recurrence": [
+      "RRULE:FREQ=WEEKLY;WKST=SU;COUNT=8"
+    ],
+    "iCalUID": "138e0ik8hse16rq3597djii23c@google.com",
+    "eventType": "default"
+  },
+  "exceptions": [],
+  "instances": [
+    {
+      "kind": "calendar#event",
+      "id": "138e0ik8hse16rq3597djii23c_20261011T100000Z",
+      "status": "confirmed",
+      "summary": "other-tz",
+      "start": {
+        "dateTime": "2026-10-11T10:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "end": {
+        "dateTime": "2026-10-11T11:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "recurringEventId": "138e0ik8hse16rq3597djii23c",
+      "originalStartTime": {
+        "dateTime": "2026-10-11T10:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "iCalUID": "138e0ik8hse16rq3597djii23c@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "138e0ik8hse16rq3597djii23c_20261018T100000Z",
+      "status": "confirmed",
+      "summary": "other-tz",
+      "start": {
+        "dateTime": "2026-10-18T10:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "end": {
+        "dateTime": "2026-10-18T11:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "recurringEventId": "138e0ik8hse16rq3597djii23c",
+      "originalStartTime": {
+        "dateTime": "2026-10-18T10:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "iCalUID": "138e0ik8hse16rq3597djii23c@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "138e0ik8hse16rq3597djii23c_20261025T110000Z",
+      "status": "confirmed",
+      "summary": "other-tz",
+      "start": {
+        "dateTime": "2026-10-25T11:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "end": {
+        "dateTime": "2026-10-25T12:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "recurringEventId": "138e0ik8hse16rq3597djii23c",
+      "originalStartTime": {
+        "dateTime": "2026-10-25T11:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "iCalUID": "138e0ik8hse16rq3597djii23c@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "138e0ik8hse16rq3597djii23c_20261101T110000Z",
+      "status": "confirmed",
+      "summary": "other-tz",
+      "start": {
+        "dateTime": "2026-11-01T11:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "end": {
+        "dateTime": "2026-11-01T12:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "recurringEventId": "138e0ik8hse16rq3597djii23c",
+      "originalStartTime": {
+        "dateTime": "2026-11-01T11:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "iCalUID": "138e0ik8hse16rq3597djii23c@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "138e0ik8hse16rq3597djii23c_20261108T110000Z",
+      "status": "confirmed",
+      "summary": "other-tz",
+      "start": {
+        "dateTime": "2026-11-08T11:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "end": {
+        "dateTime": "2026-11-08T12:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "recurringEventId": "138e0ik8hse16rq3597djii23c",
+      "originalStartTime": {
+        "dateTime": "2026-11-08T11:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "iCalUID": "138e0ik8hse16rq3597djii23c@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "138e0ik8hse16rq3597djii23c_20261115T110000Z",
+      "status": "confirmed",
+      "summary": "other-tz",
+      "start": {
+        "dateTime": "2026-11-15T11:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "end": {
+        "dateTime": "2026-11-15T12:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "recurringEventId": "138e0ik8hse16rq3597djii23c",
+      "originalStartTime": {
+        "dateTime": "2026-11-15T11:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "iCalUID": "138e0ik8hse16rq3597djii23c@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "138e0ik8hse16rq3597djii23c_20261122T110000Z",
+      "status": "confirmed",
+      "summary": "other-tz",
+      "start": {
+        "dateTime": "2026-11-22T11:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "end": {
+        "dateTime": "2026-11-22T12:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "recurringEventId": "138e0ik8hse16rq3597djii23c",
+      "originalStartTime": {
+        "dateTime": "2026-11-22T11:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "iCalUID": "138e0ik8hse16rq3597djii23c@google.com",
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "id": "138e0ik8hse16rq3597djii23c_20261129T110000Z",
+      "status": "confirmed",
+      "summary": "other-tz",
+      "start": {
+        "dateTime": "2026-11-29T11:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "end": {
+        "dateTime": "2026-11-29T12:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "recurringEventId": "138e0ik8hse16rq3597djii23c",
+      "originalStartTime": {
+        "dateTime": "2026-11-29T11:00:00Z",
+        "timeZone": "Europe/London"
+      },
+      "iCalUID": "138e0ik8hse16rq3597djii23c@google.com",
+      "eventType": "default"
+    }
+  ]
+}
