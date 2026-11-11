@@ -3,7 +3,7 @@
 
 use chrono::{DateTime, NaiveDate, NaiveTime, TimeDelta, TimeZone as _, Timelike as _, Utc};
 use chrono_tz::Tz;
-use takt_store::{Occurrence, display_instant};
+use takt_store::{Occurrence, When, display_instant};
 
 use crate::agenda::{
     RowKey, Styling, day_span, event_key, format_time, label_for, short_date, title_of,
@@ -42,6 +42,9 @@ pub struct Chip {
     pub account_badge: Option<String>,
     pub declined: bool,
     pub warning: bool,
+    /// The whole event's start and end, whichever piece this is.
+    pub start: When,
+    pub end: When,
 }
 
 /// A timed event's part on one day of the time grid.
@@ -192,6 +195,8 @@ fn chip(p: &Placed, date: NaiveDate, input: &GridInput) -> Chip {
         account_badge: input.styling.badge(&p.o.account_id),
         declined: p.o.self_response.as_deref() == Some("declined"),
         warning: p.o.recurrence_error,
+        start: p.o.start,
+        end: p.o.end,
     }
 }
 

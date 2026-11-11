@@ -270,6 +270,7 @@ mod tests {
             is_task: false,
             completed: false,
             warning: false,
+            times: None,
         }
     }
 

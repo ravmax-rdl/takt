@@ -1,16 +1,21 @@
 //! The day and week views: day headers, an all-day strip, and hour-by-hour
 //! columns that scroll.
 
-use chrono::{Datelike as _, NaiveDate};
+use chrono::{Datelike as _, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta};
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::{ActiveTheme as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use crate::entry::format_time;
 use crate::grid::{DAY_MINUTES, GridDay, TimeGrid, TimedBlock};
+use crate::ui::editing::{Drag, DragMode, EventRef, Preview};
 use crate::ui::grid_common::{
-    BAR_HEIGHT, GridState, bar_element, chip_id, date_id, ink_on, select_on_click,
+    BAR_HEIGHT, GridState, bar_element, chip_id, date_id, ink_on, record_area, select_on_click,
 };
+
+/// Height of the strip at a block's bottom edge that resizes it.
+const RESIZE_HANDLE: f32 = 6.;
 
 /// Height of one hour.
 pub const HOUR_HEIGHT: f32 = 48.;
@@ -81,7 +86,9 @@ pub fn render(
                             cx,
                         )
                     }),
-                )),
+                ))
+                // Outside the scrolled lanes, so it is the strip as drawn.
+                .child(record_area(state.day_area)),
         );
 
     let hours = |labels: &[String]| {
@@ -117,10 +124,19 @@ pub fn render(
                     row.child(hours(&zone.hours))
                 })
                 .child(hours(&grid.hours))
-                .children(grid.days.iter().map(|day| {
-                    let minute = now.filter(|(date, _)| *date == day.date).map(|(_, m)| m);
-                    day_column(day, minute, state, cx)
-                })),
+                .child(
+                    h_flex()
+                        .relative()
+                        .flex_1()
+                        .min_w_0()
+                        .h_full()
+                        .items_start()
+                        .children(grid.days.iter().map(|day| {
+                            let minute = now.filter(|(date, _)| *date == day.date).map(|(_, m)| m);
+                            day_column(day, minute, state, cx)
+                        }))
+                        .child(record_area(state.time_area)),
+                ),
         );
 
     v_flex()
@@ -156,6 +172,9 @@ fn day_header(date: NaiveDate, week: bool, state: &GridState, cx: &App) -> AnyEl
             theme.ring
         } else {
             transparent_black()
+        })
+        .when(state.drop_day() == Some(date), |d| {
+            d.bg(theme.primary.opacity(0.25))
         })
         .when(today, |d| {
             d.bg(theme.primary).text_color(theme.primary_foreground)
@@ -193,9 +212,64 @@ fn day_header(date: NaiveDate, week: bool, state: &GridState, cx: &App) -> AnyEl
         .into_any_element()
 }
 
-/// One day's hour lines, events and, on today, the current-time line.
+/// Where a drag would put the event, drawn on the part of it that is on `date`.
+fn ghost(drag: &Drag, date: NaiveDate, state: &GridState, cx: &App) -> Option<AnyElement> {
+    let Preview::Timed { start, end } = drag.preview else {
+        return None;
+    };
+    let day_start = date.and_time(NaiveTime::MIN);
+    let day_end = day_start + TimeDelta::days(1);
+    if !drag.moved || end <= day_start || start >= day_end {
+        return None;
+    }
+    let minute = |t: NaiveDateTime| (t.clamp(day_start, day_end) - day_start).num_minutes() as u32;
+    let top = minute(start).min(DAY_MINUTES - 15);
+    let bottom = minute(end).max(top + 15);
+    let theme = cx.theme();
+    let (fill, ink): (Hsla, Hsla) = match &drag.event {
+        Some(event) => (rgb(event.color).into(), ink_on(event.color).into()),
+        None => (theme.primary, theme.primary_foreground),
+    };
+    let title = drag
+        .event
+        .as_ref()
+        .map_or_else(|| "New event".to_owned(), |event| event.title.clone());
+    Some(
+        div()
+            .absolute()
+            .top(px(y_of(top)))
+            .h(px(y_of(bottom - top)))
+            .left_0()
+            .w_full()
+            .pr(px(3.))
+            .child(
+                v_flex()
+                    .size_full()
+                    .px_1()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(theme.foreground)
+                    .bg(fill.opacity(0.7))
+                    .text_color(ink)
+                    .text_xs()
+                    .overflow_hidden()
+                    .child(div().font_semibold().truncate().child(title))
+                    .child(div().truncate().child(format!(
+                        "{}–{}",
+                        format_time(start.time(), state.use_24h),
+                        format_time(end.time(), state.use_24h)
+                    ))),
+            )
+            .into_any_element(),
+    )
+}
+
+/// One day's hour lines, events and, on today, the current-time line. A drag
+/// on its empty part draws a new event; a double click makes an hour-long one.
 fn day_column(day: &GridDay, now: Option<u32>, state: &GridState, cx: &App) -> AnyElement {
     let theme = cx.theme();
+    let this = state.this.clone();
+    let date = day.date;
     v_flex()
         .relative()
         .flex_1()
@@ -206,18 +280,33 @@ fn day_column(day: &GridDay, now: Option<u32>, state: &GridState, cx: &App) -> A
         .when(day.date == state.anchor, |d| {
             d.bg(theme.muted.opacity(0.35))
         })
-        .children((0..24).map(|_| {
+        .on_mouse_down(MouseButton::Left, move |press, window, cx| {
+            let _ = this.update(cx, |view, cx| {
+                view.press(
+                    None,
+                    DragMode::Create,
+                    press.position,
+                    press.click_count,
+                    window,
+                    cx,
+                )
+            });
+        })
+        .children((0..24).map(|hour| {
             div()
+                .id(SharedString::from(format!("slot-{date}-{hour:02}")))
                 .h(px(HOUR_HEIGHT))
                 .flex_none()
                 .border_b_1()
                 .border_color(theme.border)
+                .test_support()
         }))
         .children(
             day.blocks
                 .iter()
                 .map(|block| block_element(block, day.date, state, cx)),
         )
+        .children(state.drag.and_then(|drag| ghost(drag, date, state, cx)))
         .when_some(now, |column, minute| {
             column.child(
                 div()
@@ -285,6 +374,25 @@ fn block_element(block: &TimedBlock, day: NaiveDate, state: &GridState, cx: &App
                 })
             })
     };
+    // A series takt could not expand cannot be changed from here.
+    let event = EventRef::of_chip(chip).filter(|_| !chip.warning);
+    let press = |mode: DragMode| {
+        let (this, event) = (state.this.clone(), event.clone());
+        move |press: &MouseDownEvent, window: &mut Window, cx: &mut App| {
+            if let Some(event) = event.clone() {
+                let _ = this.update(cx, |view, cx| {
+                    view.press(
+                        Some(event),
+                        mode,
+                        press.position,
+                        press.click_count,
+                        window,
+                        cx,
+                    )
+                });
+            }
+        }
+    };
     div()
         .id(chip_id("block", chip, day))
         .absolute()
@@ -294,8 +402,22 @@ fn block_element(block: &TimedBlock, day: NaiveDate, state: &GridState, cx: &App
         .w(relative(block.slot.span as f32 / columns))
         .pr(px(3.))
         .cursor_pointer()
+        .when(state.is_dragged(chip), |d| d.opacity(0.4))
+        .on_mouse_down(MouseButton::Left, press(DragMode::Move))
         .on_click(select_on_click(&state.this, chip))
         .child(inner)
+        .child(
+            div()
+                .id(chip_id("resize", chip, day))
+                .absolute()
+                .bottom_0()
+                .left_0()
+                .w_full()
+                .h(px(RESIZE_HANDLE))
+                .cursor_row_resize()
+                .on_mouse_down(MouseButton::Left, press(DragMode::Resize))
+                .test_support(),
+        )
         .test_support()
         .into_any_element()
 }

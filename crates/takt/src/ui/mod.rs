@@ -1,6 +1,8 @@
 mod agenda_list;
 mod app_view;
 mod detail_panel;
+pub mod editing;
+pub mod editor;
 mod first_run;
 mod grid_common;
 mod main_view;

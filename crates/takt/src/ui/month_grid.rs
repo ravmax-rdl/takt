@@ -8,7 +8,7 @@ use gpui_kit::*;
 
 use crate::grid::{MonthGrid, MonthWeek};
 use crate::layout::{BarSpan, fit_lanes};
-use crate::ui::grid_common::{BAR_HEIGHT, GridState, bar_element, date_id};
+use crate::ui::grid_common::{BAR_HEIGHT, GridState, bar_element, date_id, record_area};
 
 /// Height of the weekday names above the grid.
 const WEEKDAYS_HEIGHT: f32 = 24.;
@@ -48,11 +48,19 @@ pub fn render(month: &MonthGrid, height: f32, state: &GridState, cx: &App) -> An
     v_flex()
         .size_full()
         .child(weekdays)
-        .children(
-            month
-                .weeks
-                .iter()
-                .map(|week| week_row(week, cap, state, cx)),
+        .child(
+            v_flex()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .children(
+                    month
+                        .weeks
+                        .iter()
+                        .map(|week| week_row(week, cap, state, cx)),
+                )
+                .child(record_area(state.day_area)),
         )
         .into_any_element()
 }
@@ -138,7 +146,7 @@ fn day_cell(date: NaiveDate, state: &GridState, cx: &App) -> AnyElement {
     let theme = cx.theme();
     let today = date == state.today;
     let in_month = date.month() == state.anchor.month() && date.year() == state.anchor.year();
-    let (select, open) = (state.this.clone(), state.this.clone());
+    let (select, open, press) = (state.this.clone(), state.this.clone(), state.this.clone());
     let label = if date.day() == 1 {
         date.format("%-d %b").to_string()
     } else {
@@ -152,6 +160,15 @@ fn day_cell(date: NaiveDate, state: &GridState, cx: &App) -> AnyElement {
         .border_l_1()
         .border_color(theme.border)
         .when(date == state.anchor, |d| d.bg(theme.muted.opacity(0.5)))
+        .when(state.drop_day() == Some(date), |d| {
+            d.bg(theme.primary.opacity(0.2))
+        })
+        // A double click on the empty part of a day starts an all-day event.
+        .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+            let _ = press.update(cx, |view, cx| {
+                view.press_day(date, event.click_count, window, cx)
+            });
+        })
         .on_click(move |_, window, cx| {
             let _ = select.update(cx, |view, cx| view.go_to(date, window, cx));
         })

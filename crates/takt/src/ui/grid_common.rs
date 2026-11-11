@@ -1,5 +1,8 @@
 //! Pieces the time grid and the month grid share.
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use chrono::NaiveDate;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::{ActiveTheme as _, h_flex};
@@ -8,6 +11,7 @@ use gpui_kit::*;
 
 use crate::agenda::RowKey;
 use crate::grid::{Bar, Chip};
+use crate::ui::editing::{Drag, DragMode, EventRef, Preview};
 use crate::ui::main_view::MainView;
 
 /// Height of one bar lane, gap included.
@@ -20,6 +24,69 @@ pub struct GridState<'a> {
     pub today: NaiveDate,
     /// The selected day.
     pub anchor: NaiveDate,
+    pub use_24h: bool,
+    /// The drag in progress or being saved, if any.
+    pub drag: Option<&'a Drag>,
+    /// Where the grids record the area a drag is measured against.
+    pub time_area: &'a Rc<Cell<Option<Bounds<Pixels>>>>,
+    pub day_area: &'a Rc<Cell<Option<Bounds<Pixels>>>>,
+}
+
+impl GridState<'_> {
+    /// Whether `chip` is the event being dragged to somewhere else.
+    pub fn is_dragged(&self, chip: &Chip) -> bool {
+        self.drag.is_some_and(|drag| {
+            drag.moved && drag.event.as_ref().is_some_and(|e| e.key() == chip.key)
+        })
+    }
+
+    /// The day a day-to-day drag is over.
+    pub fn drop_day(&self) -> Option<NaiveDate> {
+        match self.drag {
+            Some(Drag {
+                preview: Preview::Day(day),
+                moved: true,
+                ..
+            }) => Some(*day),
+            _ => None,
+        }
+    }
+}
+
+/// An invisible element that records where its parent was drawn.
+pub fn record_area(area: &Rc<Cell<Option<Bounds<Pixels>>>>) -> impl IntoElement {
+    let area = area.clone();
+    canvas(move |bounds, _, _| area.set(Some(bounds)), |_, _, _, _| {})
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+}
+
+/// A mouse-down handler for the chip's event: a press starts a drag, a
+/// double click opens the editor.
+pub fn drag_on_press(
+    this: &WeakEntity<MainView>,
+    chip: &Chip,
+    mode: DragMode,
+) -> impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static {
+    let this = this.clone();
+    // A series takt could not expand cannot be changed from here.
+    let event = EventRef::of_chip(chip).filter(|_| !chip.warning);
+    move |press, window, cx| {
+        if let Some(event) = event.clone() {
+            let _ = this.update(cx, |view, cx| {
+                view.press(
+                    Some(event),
+                    mode,
+                    press.position,
+                    press.click_count,
+                    window,
+                    cx,
+                )
+            });
+        }
+    }
 }
 
 /// Black or white, whichever reads better on `color`.
@@ -157,6 +224,11 @@ pub fn bar_element(
         .pb(px(2.))
         .occlude()
         .cursor_pointer()
+        .when(state.is_dragged(chip), |d| d.opacity(0.4))
+        .on_mouse_down(
+            MouseButton::Left,
+            drag_on_press(&state.this, chip, DragMode::Days),
+        )
         .on_click(select_on_click(&state.this, chip))
         .child(inner)
         .test_support()

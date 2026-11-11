@@ -20,7 +20,12 @@ gpui_kit::actions!(
         ShowDay,
         ShowWeek,
         ShowMonth,
-        ShowAgenda
+        ShowAgenda,
+        NewEvent,
+        EditEvent,
+        DeleteEvent,
+        SaveEdit,
+        CancelEdit
     ]
 );
 
@@ -28,6 +33,9 @@ gpui_kit::actions!(
 pub const CONTEXT: &str = "Takt";
 /// Key context of the day, week and month grids, inside [`CONTEXT`].
 pub const GRID_CONTEXT: &str = "Grid";
+/// Key context of the event editor. It is beside [`CONTEXT`], not inside it,
+/// so the main view's single-letter keys do not fire while typing.
+pub const EDITOR_CONTEXT: &str = "Editor";
 
 pub fn bind(cx: &mut App) {
     let grid = Some("Takt > Grid");
@@ -44,6 +52,15 @@ pub fn bind(cx: &mut App) {
         KeyBinding::new("3", ShowMonth, Some(CONTEXT)),
         KeyBinding::new("a", ShowAgenda, Some(CONTEXT)),
         KeyBinding::new("4", ShowAgenda, Some(CONTEXT)),
+        KeyBinding::new("c", NewEvent, Some(CONTEXT)),
+        KeyBinding::new("e", EditEvent, Some(CONTEXT)),
+        KeyBinding::new("delete", DeleteEvent, Some(CONTEXT)),
+        KeyBinding::new("backspace", DeleteEvent, Some(CONTEXT)),
+        // The editor. A focused input has its own Escape and Enter bindings,
+        // which the editor also listens for.
+        KeyBinding::new("escape", CancelEdit, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("secondary-enter", SaveEdit, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("secondary-s", SaveEdit, Some(EDITOR_CONTEXT)),
         KeyBinding::new("n", NextPeriod, Some(CONTEXT)),
         KeyBinding::new("p", PreviousPeriod, Some(CONTEXT)),
         // The agenda list. `k` goes through the main view so it can load
