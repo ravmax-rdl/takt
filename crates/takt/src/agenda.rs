@@ -66,64 +66,105 @@ pub struct DaySection {
 /// Rows sort by group (all-day events, tasks, timed), then start, then title.
 type SortKey = (u8, DateTime<Utc>, String);
 
-pub fn build_agenda(input: &AgendaInput) -> Vec<DaySection> {
-    let several_accounts = input.accounts.len() > 1;
-    let emails: HashMap<&str, &str> = input
-        .accounts
-        .iter()
-        .map(|a| (a.account_id.as_str(), a.email.as_str()))
-        .collect();
-    let calendar_colors: HashMap<(&str, &str), u32> = input
-        .calendars
-        .iter()
-        .filter_map(|c| {
-            Some((
-                (c.account_id.as_str(), c.calendar_id.as_str()),
-                parse_hex(c.background_color.as_deref()?)?,
-            ))
-        })
-        .collect();
-    let badge = |account_id: &str| {
-        several_accounts.then(|| {
-            emails
+/// Resolves an occurrence's colour and account badge. Shared by every view.
+pub struct Styling<'a> {
+    several_accounts: bool,
+    emails: HashMap<&'a str, &'a str>,
+    calendar_colors: HashMap<(&'a str, &'a str), u32>,
+    palettes: &'a HashMap<String, ColorPalette>,
+}
+
+impl<'a> Styling<'a> {
+    pub fn new(
+        accounts: &'a [AccountRow],
+        calendars: &'a [CalendarRow],
+        palettes: &'a HashMap<String, ColorPalette>,
+    ) -> Self {
+        Self {
+            several_accounts: accounts.len() > 1,
+            emails: accounts
+                .iter()
+                .map(|a| (a.account_id.as_str(), a.email.as_str()))
+                .collect(),
+            calendar_colors: calendars
+                .iter()
+                .filter_map(|c| {
+                    Some((
+                        (c.account_id.as_str(), c.calendar_id.as_str()),
+                        parse_hex(c.background_color.as_deref()?)?,
+                    ))
+                })
+                .collect(),
+            palettes,
+        }
+    }
+
+    /// The event's own colour from the palette, else its calendar's.
+    pub fn color(&self, o: &Occurrence) -> u32 {
+        o.color_id
+            .as_deref()
+            .and_then(|id| self.palettes.get(&o.account_id)?.event.get(id))
+            .and_then(|(background, _)| parse_hex(background))
+            .or_else(|| {
+                self.calendar_colors
+                    .get(&(o.account_id.as_str(), o.calendar_id.as_str()))
+                    .copied()
+            })
+            .unwrap_or(DEFAULT_COLOR)
+    }
+
+    /// The account's email, shown only when several accounts are signed in.
+    pub fn badge(&self, account_id: &str) -> Option<String> {
+        self.several_accounts.then(|| {
+            self.emails
                 .get(account_id)
                 .copied()
                 .unwrap_or(account_id)
                 .to_owned()
         })
-    };
+    }
+}
+
+pub fn title_of(o: &Occurrence) -> String {
+    o.summary
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "(No title)".into())
+}
+
+pub fn event_key(o: &Occurrence) -> RowKey {
+    RowKey::Event {
+        account_id: o.account_id.clone(),
+        calendar_id: o.calendar_id.clone(),
+        event_id: o.event_id.clone(),
+        instance_id: o.instance_id.clone(),
+    }
+}
+
+pub fn format_time(t: DateTime<Tz>, use_24h: bool) -> String {
+    if use_24h {
+        t.format("%H:%M").to_string()
+    } else {
+        t.format("%-I:%M %p").to_string()
+    }
+}
+
+pub fn build_agenda(input: &AgendaInput) -> Vec<DaySection> {
+    let styling = Styling::new(input.accounts, input.calendars, input.palettes);
+    let badge = |account_id: &str| styling.badge(account_id);
     let mut days: BTreeMap<NaiveDate, Vec<(SortKey, AgendaRow)>> = BTreeMap::new();
 
     for o in input.occurrences {
-        let color = o
-            .color_id
-            .as_deref()
-            .and_then(|id| input.palettes.get(&o.account_id)?.event.get(id))
-            .and_then(|(background, _)| parse_hex(background))
-            .or_else(|| {
-                calendar_colors
-                    .get(&(o.account_id.as_str(), o.calendar_id.as_str()))
-                    .copied()
-            })
-            .unwrap_or(DEFAULT_COLOR);
+        let color = styling.color(o);
         let (first, last) = day_span(&o.start, &o.end, input.tz);
         let shown_from = first.max(input.from);
         let shown_last = input.to.pred_opt().map_or(last, |end| last.min(end));
         for date in shown_from.iter_days().take_while(|d| *d <= shown_last) {
             let (group, label) = label_for(o, date, first, last, input.tz, input.use_24h);
             let row = AgendaRow {
-                key: RowKey::Event {
-                    account_id: o.account_id.clone(),
-                    calendar_id: o.calendar_id.clone(),
-                    event_id: o.event_id.clone(),
-                    instance_id: o.instance_id.clone(),
-                },
+                key: event_key(o),
                 time_label: label,
-                title: o
-                    .summary
-                    .clone()
-                    .filter(|s| !s.trim().is_empty())
-                    .unwrap_or_else(|| "(No title)".into()),
+                title: title_of(o),
                 location: o.location.clone(),
                 color,
                 account_badge: badge(&o.account_id),
@@ -190,7 +231,7 @@ pub fn build_agenda(input: &AgendaInput) -> Vec<DaySection> {
 /// at exactly the start of a local day does not count as touching that day;
 /// on a day whose midnight does not exist, its start is the first instant
 /// that does.
-fn day_span(start: &When, end: &When, tz: Tz) -> (NaiveDate, NaiveDate) {
+pub fn day_span(start: &When, end: &When, tz: Tz) -> (NaiveDate, NaiveDate) {
     match (start, end) {
         (When::Date(s), When::Date(e)) => (*s, if e > s { *e - TimeDelta::days(1) } else { *s }),
         _ => {
@@ -205,7 +246,7 @@ fn day_span(start: &When, end: &When, tz: Tz) -> (NaiveDate, NaiveDate) {
     }
 }
 
-fn label_for(
+pub fn label_for(
     o: &Occurrence,
     date: NaiveDate,
     first: NaiveDate,
@@ -218,13 +259,7 @@ fn label_for(
     }
     let start = display_instant(&o.start, tz).with_timezone(&tz);
     let end = display_instant(&o.end, tz).with_timezone(&tz);
-    let time = |t: DateTime<Tz>| {
-        if use_24h {
-            t.format("%H:%M").to_string()
-        } else {
-            t.format("%-I:%M %p").to_string()
-        }
-    };
+    let time = |t: DateTime<Tz>| format_time(t, use_24h);
     match (date == first, date == last) {
         (true, true) => (2, format!("{}–{}", time(start), time(end))),
         (true, false) => (2, format!("From {}", time(start))),
@@ -233,11 +268,17 @@ fn label_for(
     }
 }
 
-fn header(date: NaiveDate, today: NaiveDate) -> String {
+/// "Fri 17 Oct", with the year when it is not `today`'s.
+pub fn short_date(date: NaiveDate, today: NaiveDate) -> String {
     let mut text = date.format("%a %-d %b").to_string();
     if date.year() != today.year() {
         text.push_str(&format!(" {}", date.year()));
     }
+    text
+}
+
+pub fn header(date: NaiveDate, today: NaiveDate) -> String {
+    let text = short_date(date, today);
     if date == today {
         format!("Today · {text}")
     } else if date == today + TimeDelta::days(1) {
@@ -294,6 +335,7 @@ mod tests {
             selected: true,
             hidden: false,
             primary: true,
+            visible: true,
         }
     }
 
