@@ -48,7 +48,11 @@ fn main_view_renders_the_seeded_agenda(cx: &mut TestAppContext) {
             ..Default::default()
         };
         gpui_kit::open_window(options, cx, |window, cx| {
-            cx.new(|cx| takt::ui::MainView::new(db.clone(), commands, events, window, cx))
+            let settings = takt::config::ViewSettings {
+                default_view: takt::view::ViewKind::Agenda,
+                ..Default::default()
+            };
+            cx.new(|cx| takt::ui::MainView::new(db.clone(), settings, commands, events, window, cx))
         })
         .unwrap()
     });
