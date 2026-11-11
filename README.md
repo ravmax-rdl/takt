@@ -2,7 +2,7 @@
 
 A desktop client for Google Calendar and Google Tasks, written in Rust with [gpui-kit](https://github.com/longbridge/gpui-kit).
 
-This is sub-project 1 of 6: a read-only agenda that merges several Google accounts and works offline from a local cache. Design: `docs/superpowers/specs/2026-10-17-takt-foundation-design.md`.
+Sub-projects 1 and 2 of 6 are done: read-only day, week, month and agenda views that merge several Google accounts and work offline from a local cache. Designs: `docs/superpowers/specs/2026-10-17-takt-foundation-design.md` (accounts, cache, sync) and `docs/superpowers/specs/2026-11-11-takt-views-design.md` (views).
 
 ## Building
 
@@ -50,15 +50,42 @@ Refresh tokens are stored in the OS keychain under the service name `takt`, one 
 cargo run -p takt --release
 ```
 
+takt opens in the week view. The toolbar switches between day, week, month and agenda; the mini calendar in the sidebar jumps to a date; clicking a calendar in the sidebar shows or hides it in takt only (nothing is sent to Google).
+
 | Key | Action |
 |---|---|
-| `j` / `k` | Next / previous row (`k` on the first row loads earlier days) |
-| `Enter` | Open details |
-| `Esc` | Close details |
+| `d` / `1`, `w` / `2`, `m` / `3`, `a` / `4` | Day, week, month, agenda |
+| `j`, `n`, `PageDown` | Next day, week or month. In the agenda, `j` is the next row |
+| `k`, `p`, `PageUp` | Previous day, week or month. In the agenda, `k` is the previous row, and on the first row it loads earlier days |
 | `t` | Jump to today |
+| `←` / `h`, `→` / `l` | Move the selected day |
+| `↑` / `↓` | Month: move the selected day by a week. Day and week: previous / next event on the selected day |
+| `Tab` / `Shift+Tab` | Next / previous event in the view |
+| `Enter` | Open the selected event's details; with no event selected, open the selected day |
+| `Esc` | Close details; pressed again, clear the selection |
 | `Ctrl+R` (`Cmd+R` on macOS) | Sync now |
 
 Set `TAKT_LOG=debug` for more detailed logs.
+
+### View settings
+
+Optional, in the same `config.toml`:
+
+```toml
+[view]
+default = "week"                          # day, week, month or agenda
+time_zone = "Europe/Berlin"               # default: the OS time zone
+secondary_time_zone = "America/New_York"  # a second column of hour labels in day and week
+week_start = "monday"                     # default: your Google Calendar setting
+```
+
+### Trying the views without an account
+
+```bash
+cargo run -p takt --example demo -- month
+```
+
+This opens the main window over made-up events in a temporary cache, with no sign-in and no sync. The argument is the view to open in.
 
 ## Tests
 
@@ -79,5 +106,6 @@ The capture keeps only an allowlist of event fields (`id`, `status`, `summary`, 
 ## Known limits
 
 - The Tasks API stores only the date of a task's due time, and does not expose recurring tasks.
-- Sub-project 1 is read-only: nothing is written to Google.
+- takt is read-only so far: nothing is written to Google. Hiding a calendar is a local choice and does not change the calendar's setting in Google.
+- Tasks with a due date appear in the agenda only, not yet on the day, week and month grids.
 - Logs rotate daily and only the last 14 days are kept.
