@@ -2,8 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
+use chrono::Weekday;
+use chrono_tz::Tz;
 use serde::Deserialize;
 use takt_google::OAuthClient;
+
+use crate::view::{ViewKind, parse_weekday};
 
 pub const EXAMPLE: &str = "[google]\nclient_id = \"<your id>.apps.googleusercontent.com\"\nclient_secret = \"<your secret>\"\n";
 
@@ -73,6 +77,66 @@ pub fn load(path: &Path) -> ConfigState {
     }
 }
 
+/// The optional `[view]` section of config.toml.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ViewSettings {
+    /// The view takt opens in.
+    pub default_view: ViewKind,
+    /// Shown instead of the OS time zone.
+    pub time_zone: Option<Tz>,
+    /// A second column of hour labels in the day and week views.
+    pub secondary_time_zone: Option<Tz>,
+    /// Overrides the Google account's "week starts on" setting.
+    pub week_start: Option<Weekday>,
+}
+
+#[derive(Deserialize, Default)]
+struct ViewFile {
+    #[serde(default)]
+    view: ViewSection,
+}
+
+#[derive(Deserialize, Default)]
+struct ViewSection {
+    default: Option<String>,
+    time_zone: Option<String>,
+    secondary_time_zone: Option<String>,
+    week_start: Option<String>,
+}
+
+/// Reads `[view]`. A missing file or section gives the defaults; a value
+/// takt cannot read is logged and skipped, so a typo never blocks startup.
+pub fn load_view_settings(path: &Path) -> ViewSettings {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return ViewSettings::default();
+    };
+    match toml::from_str::<ViewFile>(&text) {
+        Ok(file) => view_settings(file.view),
+        Err(error) => {
+            tracing::warn!(%error, "cannot read [view] from config.toml");
+            ViewSettings::default()
+        }
+    }
+}
+
+fn view_settings(section: ViewSection) -> ViewSettings {
+    fn read<T>(key: &str, value: Option<String>, parse: impl Fn(&str) -> Option<T>) -> Option<T> {
+        let value = value?;
+        let parsed = parse(&value);
+        if parsed.is_none() {
+            tracing::warn!(key, value, "ignoring an unreadable [view] setting");
+        }
+        parsed
+    }
+    let zone = |name: &str| name.trim().parse::<Tz>().ok();
+    ViewSettings {
+        default_view: read("default", section.default, ViewKind::parse).unwrap_or_default(),
+        time_zone: read("time_zone", section.time_zone, zone),
+        secondary_time_zone: read("secondary_time_zone", section.secondary_time_zone, zone),
+        week_start: read("week_start", section.week_start, parse_weekday),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +203,61 @@ mod tests {
         let path = dir.path().join("config.toml");
         std::fs::create_dir(&path).unwrap();
         assert!(matches!(load(&path), ConfigState::Invalid(_)));
+    }
+
+    #[test]
+    fn view_settings_default_without_a_section() {
+        let (_dir, path) = write(
+            "[google]
+client_id = \"a\"
+client_secret = \"b\"
+",
+        );
+        assert_eq!(load_view_settings(&path), ViewSettings::default());
+        assert_eq!(ViewSettings::default().default_view, ViewKind::Week);
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            load_view_settings(&dir.path().join("config.toml")),
+            ViewSettings::default()
+        );
+    }
+
+    #[test]
+    fn view_settings_are_read() {
+        let (_dir, path) = write(
+            "[view]
+default = \"month\"
+time_zone = \"Europe/Berlin\"
+             secondary_time_zone = \"America/New_York\"
+week_start = \"sunday\"
+",
+        );
+        assert_eq!(
+            load_view_settings(&path),
+            ViewSettings {
+                default_view: ViewKind::Month,
+                time_zone: Some(Tz::Europe__Berlin),
+                secondary_time_zone: Some(Tz::America__New_York),
+                week_start: Some(Weekday::Sun),
+            }
+        );
+    }
+
+    #[test]
+    fn unreadable_view_values_are_skipped() {
+        let (_dir, path) = write(
+            "[view]
+default = \"year\"
+time_zone = \"Mars/Olympus\"
+week_start = \"monday\"
+",
+        );
+        assert_eq!(
+            load_view_settings(&path),
+            ViewSettings {
+                week_start: Some(Weekday::Mon),
+                ..ViewSettings::default()
+            }
+        );
     }
 }

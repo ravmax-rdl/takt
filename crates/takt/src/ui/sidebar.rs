@@ -1,4 +1,5 @@
 use async_channel::Sender;
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{
     ActiveTheme as _, Sizable as _, StyledExt as _, WindowExt as _, h_flex, v_flex,
@@ -11,10 +12,17 @@ use takt_sync::{Command, SyncState};
 use crate::agenda::{DEFAULT_COLOR, parse_hex};
 use crate::model::CalendarModel;
 
-pub fn render(model: &CalendarModel, commands: &Sender<Command>, cx: &App) -> AnyElement {
+/// `mini` is the mini calendar, drawn above the accounts.
+pub fn render(
+    model: &CalendarModel,
+    commands: &Sender<Command>,
+    mini: AnyElement,
+    cx: &App,
+) -> AnyElement {
     let theme = cx.theme();
     let add = commands.clone();
     v_flex()
+        .id("sidebar")
         .w(px(240.))
         .h_full()
         .flex_none()
@@ -23,6 +31,8 @@ pub fn render(model: &CalendarModel, commands: &Sender<Command>, cx: &App) -> An
         .border_r_1()
         .border_color(theme.border)
         .bg(theme.sidebar)
+        .overflow_y_scroll()
+        .child(mini)
         .when_some(model.last_error.clone(), |this, message| {
             this.child(div().text_xs().text_color(theme.danger).child(message))
         })
@@ -105,16 +115,48 @@ pub fn render(model: &CalendarModel, commands: &Sender<Command>, cx: &App) -> An
                                 .as_deref()
                                 .and_then(parse_hex)
                                 .unwrap_or(DEFAULT_COLOR);
+                            // Filled when shown. A click shows or hides the
+                            // calendar in takt; a calendar hidden in Google's
+                            // own settings is not synced and cannot be shown.
+                            let toggle = commands.clone();
+                            let (account_id, calendar_id) =
+                                (c.account_id.clone(), c.calendar_id.clone());
+                            let (visible, hidden) = (c.visible, c.hidden);
                             h_flex()
+                                .id(SharedString::from(format!(
+                                    "calendar-{}-{}",
+                                    c.account_id, c.calendar_id
+                                )))
                                 .gap_2()
                                 .pl_4()
+                                .py(px(1.))
                                 .items_center()
+                                .rounded_sm()
                                 .text_sm()
-                                .when(!c.selected || c.hidden, |row| {
-                                    row.text_color(theme.muted_foreground)
+                                .when(!visible, |row| row.text_color(theme.muted_foreground))
+                                .when(!hidden, |row| {
+                                    row.cursor_pointer().hover(|s| s.bg(theme.list_hover))
                                 })
-                                .child(div().flex_none().size(px(8.)).rounded_sm().bg(rgb(color)))
+                                .on_click(move |_, _, _| {
+                                    if !hidden {
+                                        let _ = toggle.try_send(Command::SetCalendarVisible {
+                                            account_id: account_id.clone(),
+                                            calendar_id: calendar_id.clone(),
+                                            visible: !visible,
+                                        });
+                                    }
+                                })
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .size(px(12.))
+                                        .rounded_sm()
+                                        .border_2()
+                                        .border_color(rgb(color))
+                                        .when(visible, |d| d.bg(rgb(color))),
+                                )
                                 .child(div().min_w_0().truncate().child(c.summary.clone()))
+                                .test_support()
                         }),
                 )
         }))

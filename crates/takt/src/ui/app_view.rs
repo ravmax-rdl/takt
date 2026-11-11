@@ -7,7 +7,7 @@ use gpui_kit::*;
 use takt_google::{Endpoints, KeyringTokenStore, OAuthClient, RetryPolicy};
 use takt_sync::{Intervals, SyncConfig, SyncHandle};
 
-use crate::config::{ConfigState, Paths, load};
+use crate::config::{ConfigState, Paths, load, load_view_settings};
 use crate::ui::first_run::FirstRun;
 use crate::ui::main_view::MainView;
 
@@ -82,7 +82,10 @@ impl AppView {
                     if let Some(old) = self.sync.borrow_mut().replace(handle) {
                         cx.background_spawn(async move { old.shutdown() }).detach();
                     }
-                    Screen::Main(cx.new(|cx| MainView::new(db, commands, events, window, cx)))
+                    let settings = load_view_settings(&self.paths.config_file);
+                    Screen::Main(
+                        cx.new(|cx| MainView::new(db, settings, commands, events, window, cx)),
+                    )
                 }
                 Err(error) => Screen::FirstRun {
                     problem: Some(format!("cannot start sync: {error}")),

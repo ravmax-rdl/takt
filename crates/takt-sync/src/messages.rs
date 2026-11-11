@@ -5,8 +5,16 @@ use takt_store::ChangeSet;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     AddAccount,
-    RemoveAccount { account_id: String },
+    RemoveAccount {
+        account_id: String,
+    },
     SyncNow,
+    /// Shows or hides a calendar in takt only; nothing is sent to Google.
+    SetCalendarVisible {
+        account_id: String,
+        calendar_id: String,
+        visible: bool,
+    },
     WindowFocus(bool),
     Shutdown,
 }

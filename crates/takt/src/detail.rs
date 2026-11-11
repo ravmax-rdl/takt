@@ -17,6 +17,8 @@ pub struct EventDetail {
     pub reminders: Vec<String>,
     pub recurrence: Vec<String>,
     pub description: Option<String>,
+    /// The event's time in its own zone, when that differs from the display zone.
+    pub zone_note: Option<String>,
     pub raw_json: String,
 }
 
@@ -74,8 +76,32 @@ pub fn event_detail(raw: &Value, when: String, calendar: String, account: String
         description: text(&raw["description"])
             .map(|d| strip_html(&d))
             .filter(|d| !d.is_empty()),
+        zone_note: None,
         raw_json: serde_json::to_string_pretty(raw).unwrap_or_default(),
     }
+}
+
+/// "09:00–10:00 in America/New_York (GMT-4)" for a timed event created in a
+/// zone whose clock differs from `display`'s at that moment.
+pub fn zone_note(raw: &Value, display: chrono_tz::Tz, use_24h: bool) -> Option<String> {
+    let name = raw["start"]["timeZone"].as_str()?;
+    let zone: chrono_tz::Tz = name.parse().ok()?;
+    let instant = |side: &str| {
+        chrono::DateTime::parse_from_rfc3339(raw[side]["dateTime"].as_str()?)
+            .ok()
+            .map(|t| t.with_timezone(&Utc))
+    };
+    let (start, end) = (instant("start")?, instant("end")?);
+    let there = start.with_timezone(&zone);
+    if there.naive_local() == start.with_timezone(&display).naive_local() {
+        return None;
+    }
+    Some(format!(
+        "{}–{} in {name} ({})",
+        crate::agenda::format_time(there, use_24h),
+        crate::agenda::format_time(end.with_timezone(&zone), use_24h),
+        crate::view::zone_label(zone, start)
+    ))
 }
 
 fn response_label(status: &str) -> &'static str {
@@ -620,5 +646,40 @@ mod tests {
             ),
             ["At start time"]
         );
+    }
+
+    #[test]
+    fn zone_note_shows_the_event_in_its_own_zone() {
+        let raw = json!({
+            "start": {"dateTime": "2026-10-20T09:00:00-04:00", "timeZone": "America/New_York"},
+            "end": {"dateTime": "2026-10-20T10:30:00-04:00", "timeZone": "America/New_York"}
+        });
+        assert_eq!(
+            zone_note(&raw, chrono_tz::Europe::Berlin, true).as_deref(),
+            Some("09:00–10:30 in America/New_York (GMT-4)")
+        );
+        assert_eq!(
+            zone_note(&raw, chrono_tz::Europe::Berlin, false).as_deref(),
+            Some("9:00 AM–10:30 AM in America/New_York (GMT-4)")
+        );
+        // Same clock time as the display zone: nothing to add.
+        assert_eq!(zone_note(&raw, chrono_tz::America::New_York, true), None);
+        assert_eq!(zone_note(&raw, chrono_tz::America::Toronto, true), None);
+    }
+
+    #[test]
+    fn zone_note_needs_a_timed_event_with_a_known_zone() {
+        let all_day = json!({"start": {"date": "2026-10-20"}, "end": {"date": "2026-10-21"}});
+        assert_eq!(zone_note(&all_day, chrono_tz::UTC, true), None);
+        let no_zone = json!({
+            "start": {"dateTime": "2026-10-20T09:00:00Z"},
+            "end": {"dateTime": "2026-10-20T10:00:00Z"}
+        });
+        assert_eq!(zone_note(&no_zone, chrono_tz::Europe::Berlin, true), None);
+        let odd = json!({
+            "start": {"dateTime": "2026-10-20T09:00:00Z", "timeZone": "Mars/Olympus"},
+            "end": {"dateTime": "2026-10-20T10:00:00Z"}
+        });
+        assert_eq!(zone_note(&odd, chrono_tz::Europe::Berlin, true), None);
     }
 }

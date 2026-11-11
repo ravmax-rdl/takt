@@ -3,10 +3,13 @@
 pub mod agenda;
 pub mod config;
 pub mod detail;
+pub mod grid;
 pub mod keys;
+pub mod layout;
 pub mod logging;
 pub mod model;
 pub mod ui;
+pub mod view;
 
 use gpui_kit::component::TitleBar;
 use gpui_kit::{AppContext as _, WindowOptions};

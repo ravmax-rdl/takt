@@ -312,3 +312,66 @@ fn same_event_in_two_accounts_appears_twice() {
     assert_eq!(got.len(), 2);
     assert!(accounts.contains(&"work") && accounts.contains(&"home"));
 }
+
+#[test]
+fn local_visibility_overrides_selected_but_not_hidden() {
+    let mut store = store_with("acc", json!({"id": "off", "selected": false}));
+    add(&mut store, "acc", json!({"id": "on", "selected": true}));
+    add(
+        &mut store,
+        "acc",
+        json!({"id": "hid", "selected": true, "hidden": true}),
+    );
+    for cal in ["off", "on", "hid"] {
+        let e = json!({"id": cal, "start": {"dateTime": "2026-10-20T09:00:00Z"}, "end": {"dateTime": "2026-10-20T10:00:00Z"}});
+        store.apply_events_page("acc", cal, &[ev(e)], None).unwrap();
+    }
+    let shown = |store: &Store| -> Vec<String> {
+        let mut ids: Vec<_> = store
+            .occurrences(&week_of_19_oct(), Tz::UTC)
+            .unwrap()
+            .into_iter()
+            .map(|o| o.calendar_id)
+            .collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(shown(&store), ["on"]);
+
+    let changes = store
+        .set_calendar_visible("acc", "off", Some(true))
+        .unwrap();
+    assert!(changes.everything);
+    store
+        .set_calendar_visible("acc", "on", Some(false))
+        .unwrap();
+    store
+        .set_calendar_visible("acc", "hid", Some(true))
+        .unwrap();
+    assert_eq!(shown(&store), ["off"]);
+    let visible: Vec<_> = store
+        .calendars(None)
+        .unwrap()
+        .into_iter()
+        .map(|c| (c.calendar_id, c.visible))
+        .collect();
+    assert!(visible.contains(&("off".into(), true)));
+    assert!(visible.contains(&("on".into(), false)));
+    assert!(visible.contains(&("hid".into(), false)));
+
+    // A later sync page keeps the local choice.
+    add(&mut store, "acc", json!({"id": "on", "selected": true}));
+    assert_eq!(shown(&store), ["off"]);
+
+    // `None` follows Google again.
+    store.set_calendar_visible("acc", "on", None).unwrap();
+    store.set_calendar_visible("acc", "off", None).unwrap();
+    assert_eq!(shown(&store), ["on"]);
+
+    assert!(
+        store
+            .set_calendar_visible("acc", "missing", Some(true))
+            .unwrap()
+            .is_empty()
+    );
+}

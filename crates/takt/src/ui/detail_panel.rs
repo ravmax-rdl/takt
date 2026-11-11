@@ -58,6 +58,10 @@ pub fn render(
             .child(div().text_lg().font_semibold().child(d.title.clone()))
             .child(div().text_sm().child(d.when.clone()))
             .child(section(
+                "Time zone",
+                d.zone_note.clone().into_iter().collect(),
+            ))
+            .child(section(
                 "Calendar",
                 vec![format!("{} · {}", d.calendar, d.account)],
             ))

@@ -19,7 +19,7 @@ struct Row {
 
 const VISIBLE: &str = "FROM events e JOIN calendars c
      ON c.account_id = e.account_id AND c.calendar_id = e.calendar_id
-     WHERE c.selected = 1 AND c.hidden = 0";
+     WHERE COALESCE(c.local_visible, c.selected) = 1 AND c.hidden = 0";
 
 impl Store {
     /// Everything visible in `range`, expanded and filtered exactly in `tz`.

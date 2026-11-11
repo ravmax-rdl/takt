@@ -217,6 +217,9 @@ async fn run(
                 Ok(Command::SyncNow) => {
                     wake_tx.send_modify(|n| *n += 1);
                 }
+                Ok(Command::SetCalendarVisible { account_id, calendar_id, visible }) => {
+                    set_calendar_visible(&shared, account_id, &calendar_id, visible);
+                }
                 Ok(Command::WindowFocus(focused)) => {
                     focus_tx.send_replace(focused);
                     if focused {
@@ -273,6 +276,25 @@ fn remove_account(shared: &Arc<Shared>, account_id: &str) {
     }
     drop(store);
     shared.send(SyncEvent::AccountsChanged);
+}
+
+fn set_calendar_visible(
+    shared: &Arc<Shared>,
+    account_id: String,
+    calendar_id: &str,
+    visible: bool,
+) {
+    let result = shared
+        .store()
+        .set_calendar_visible(&account_id, calendar_id, Some(visible));
+    match result {
+        Ok(changes) if changes.is_empty() => {}
+        Ok(changes) => shared.send(SyncEvent::Changed {
+            account_id,
+            changes,
+        }),
+        Err(error) => tracing::error!(%error, "cannot change a calendar's visibility"),
+    }
 }
 
 fn spawn_account(

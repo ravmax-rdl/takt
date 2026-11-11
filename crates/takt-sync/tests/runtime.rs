@@ -169,6 +169,46 @@ async fn existing_account_syncs_on_start_and_on_sync_now() {
 }
 
 #[tokio::test]
+async fn hiding_a_calendar_is_stored_and_announced() {
+    let rig = Rig::new().await;
+    rig.seed_account();
+    rig.mount_happy_google().await;
+    let handle = rig.start(no_browser());
+    wait_for(&handle.events, synced("acc")).await;
+    let visible = |rig: &Rig| {
+        Store::open_read_only(&rig.db())
+            .unwrap()
+            .calendars(Some("acc"))
+            .unwrap()
+            .into_iter()
+            .find(|c| c.calendar_id == "cal")
+            .map(|c| c.visible)
+    };
+    assert_eq!(visible(&rig), Some(true));
+
+    handle
+        .commands
+        .send(Command::SetCalendarVisible {
+            account_id: "acc".into(),
+            calendar_id: "cal".into(),
+            visible: false,
+        })
+        .await
+        .unwrap();
+    wait_for(&handle.events, |ev| {
+        matches!(ev, SyncEvent::Changed { account_id, changes } if account_id == "acc" && changes.everything && changes.calendars.contains("cal"))
+    })
+    .await;
+    assert_eq!(visible(&rig), Some(false));
+
+    // The next round's calendar list still says `selected`; the choice stays.
+    handle.commands.send(Command::SyncNow).await.unwrap();
+    wait_for(&handle.events, synced("acc")).await;
+    assert_eq!(visible(&rig), Some(false));
+    handle.shutdown();
+}
+
+#[tokio::test]
 async fn revoked_token_marks_account_and_asks_for_sign_in() {
     let rig = Rig::new().await;
     rig.seed_account();

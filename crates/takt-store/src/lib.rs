@@ -26,7 +26,10 @@ pub struct Store {
 }
 
 fn migrations() -> Migrations<'static> {
-    Migrations::new(vec![M::up(include_str!("../migrations/001_init.sql"))])
+    Migrations::new(vec![
+        M::up(include_str!("../migrations/001_init.sql")),
+        M::up(include_str!("../migrations/002_calendar_visibility.sql")),
+    ])
 }
 
 impl Store {

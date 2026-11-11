@@ -43,9 +43,13 @@ pub struct CalendarRow {
     pub background_color: Option<String>,
     pub foreground_color: Option<String>,
     pub access_role: Option<String>,
+    /// Google's own "show in list" flag.
     pub selected: bool,
     pub hidden: bool,
     pub primary: bool,
+    /// Whether takt shows this calendar's events: the local choice when one
+    /// was made, else `selected`; never when `hidden`.
+    pub visible: bool,
 }
 
 /// A stretch of time. `end: None` runs forever (an endless series).
