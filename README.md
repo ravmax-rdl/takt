@@ -63,12 +63,12 @@ Set `TAKT_LOG=debug` for more detailed logs.
 ## Tests
 
 ```bash
-cargo test --workspace --no-fail-fast
+cargo test --workspace
 ```
 
-The recurrence golden test (`crates/takt-recur/tests/golden.rs`) compares takt's expansion with Google's, and fails with a "no fixtures in …" message until fixtures have been captured. Until then plain `cargo test --workspace` stops at it; `--no-fail-fast` runs everything else as well.
+The recurrence golden test (`crates/takt-recur/tests/golden.rs`) compares takt's expansion with Google's `events.instances` output for the series captured in `crates/takt-recur/tests/fixtures`.
 
-To capture fixtures, sign in with takt, create series in a calendar named `takt-fixtures`, then run:
+To capture them again or add a series, sign in with takt, create the series in a calendar named `takt-fixtures`, then run:
 
 ```bash
 cargo run -p takt-google --example capture -- --config "<path to config.toml>" --email "<your email>" --calendar takt-fixtures --from 2026-01-01 --to 2028-01-01 --out crates/takt-recur/tests/fixtures
