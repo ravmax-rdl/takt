@@ -138,9 +138,14 @@ impl MainView {
         let list = cx.new(|cx| ListState::new(delegate, window, cx).selectable(true));
 
         let subscriptions = vec![
-            cx.subscribe_in(&model, window, |this, _, _: &ModelEvent, window, cx| {
-                this.on_reloaded(window, cx)
-            }),
+            cx.subscribe_in(
+                &model,
+                window,
+                |this, _, event: &ModelEvent, window, cx| match event {
+                    ModelEvent::Reloaded => this.on_reloaded(window, cx),
+                    ModelEvent::WriteDone { .. } => {}
+                },
+            ),
             cx.subscribe_in(&list, window, |this, _, event: &ListEvent, window, cx| {
                 this.on_list_event(event, window, cx)
             }),

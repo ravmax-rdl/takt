@@ -8,7 +8,7 @@ use chrono::{NaiveDate, TimeDelta, Utc, Weekday};
 use chrono_tz::Tz;
 use gpui_kit::{AppContext as _, Context, EventEmitter, Task};
 use takt_store::{AccountRow, CalendarRow, Store, StoreError, local_days};
-use takt_sync::{SyncEvent, SyncState};
+use takt_sync::{SyncEvent, SyncState, WriteError, WriteOutcome};
 
 use crate::agenda::{AgendaInput, DaySection, Styling, build_agenda};
 use crate::grid::{GridInput, MonthGrid, TimeGrid, build_month_grid, build_time_grid};
@@ -139,6 +139,12 @@ pub fn load_snapshot(db: &Path, query: &Query) -> Result<Snapshot, StoreError> {
 
 pub enum ModelEvent {
     Reloaded,
+    /// Sync answered a write the view sent. On success the change it made
+    /// was announced first, so a read for it is already running.
+    WriteDone {
+        id: u64,
+        result: Result<WriteOutcome, WriteError>,
+    },
 }
 
 pub struct CalendarModel {
@@ -409,6 +415,7 @@ impl CalendarModel {
                 self.error_from_load = false;
                 cx.notify();
             }
+            SyncEvent::WriteDone { id, result } => cx.emit(ModelEvent::WriteDone { id, result }),
         }
     }
 }
