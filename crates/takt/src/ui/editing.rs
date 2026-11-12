@@ -497,7 +497,7 @@ impl MainView {
     /// Opens the editor on a new event. Without `time`: all day on the
     /// selected day in the month, else an hour from the next half hour today
     /// or from 09:00 on another day.
-    pub(crate) fn new_event(
+    pub fn new_event(
         &mut self,
         time: Option<DraftTime>,
         window: &mut Window,
