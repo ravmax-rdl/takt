@@ -1,9 +1,12 @@
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, StyledExt as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Selectable as _, Sizable as _, StyledExt as _, h_flex, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::detail::EventDetail;
+use crate::ui::main_view::MainView;
 
 pub enum DetailContent {
     Event(Box<EventDetail>),
@@ -15,10 +18,98 @@ pub enum DetailContent {
     },
 }
 
+/// What can be done with the shown event.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DetailActions {
+    /// Its calendar can be written to.
+    pub writable: bool,
+    /// The signed-in account's reply, when it is a guest.
+    pub response: Option<String>,
+}
+
+/// Edit and Delete, and for an invitation the reply buttons.
+fn actions(actions: &DetailActions, this: &WeakEntity<MainView>, cx: &App) -> Div {
+    let theme = cx.theme();
+    let (edit, delete) = (this.clone(), this.clone());
+    v_flex()
+        .gap_2()
+        .when(actions.writable, |column| {
+            column.child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Button::new("detail-edit")
+                            .outline()
+                            .xsmall()
+                            .label("Edit")
+                            .tooltip("Edit (E)")
+                            .on_click(move |_, window, cx| {
+                                let _ = edit.update(cx, |view, cx| {
+                                    if let Some(event) = view.shown_event(cx) {
+                                        view.edit_event(event, window, cx);
+                                    }
+                                });
+                            }),
+                    )
+                    .child(
+                        Button::new("detail-delete")
+                            .ghost()
+                            .xsmall()
+                            .label("Delete")
+                            .tooltip("Delete (Del)")
+                            .on_click(move |_, window, cx| {
+                                let _ = delete.update(cx, |view, cx| {
+                                    if let Some(event) = view.shown_event(cx) {
+                                        view.delete_event(event, window, cx);
+                                    }
+                                });
+                            }),
+                    ),
+            )
+        })
+        .when_some(actions.response.clone(), |column, current| {
+            column.child(
+                h_flex()
+                    .gap_1()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_semibold()
+                            .text_color(theme.muted_foreground)
+                            .child("Going?"),
+                    )
+                    .children(
+                        [
+                            ("accepted", "detail-reply-accepted", "Yes"),
+                            ("tentative", "detail-reply-tentative", "Maybe"),
+                            ("declined", "detail-reply-declined", "No"),
+                        ]
+                        .map(|(response, id, label)| {
+                            let this = this.clone();
+                            Button::new(id)
+                                .ghost()
+                                .xsmall()
+                                .label(label)
+                                .selected(current == response)
+                                .on_click(move |_, window, cx| {
+                                    let _ = this.update(cx, |view, cx| {
+                                        if let Some(event) = view.shown_event(cx) {
+                                            view.reply(event, response, window, cx);
+                                        }
+                                    });
+                                })
+                        }),
+                    ),
+            )
+        })
+}
+
 pub fn render(
     content: &DetailContent,
     show_raw: bool,
-    on_toggle_raw: impl Fn(&mut Window, &mut App) + 'static,
+    event_actions: &DetailActions,
+    this: &WeakEntity<MainView>,
     cx: &App,
 ) -> AnyElement {
     let theme = cx.theme();
@@ -34,6 +125,7 @@ pub fn render(
             .children(lines.into_iter().map(|l| div().text_sm().child(l)))
         })
     };
+    let toggle = this.clone();
     let body = match content {
         DetailContent::Task {
             title,
@@ -57,6 +149,7 @@ pub fn render(
             .gap_3()
             .child(div().text_lg().font_semibold().child(d.title.clone()))
             .child(div().text_sm().child(d.when.clone()))
+            .child(actions(event_actions, this, cx))
             .child(section(
                 "Time zone",
                 d.zone_note.clone().into_iter().collect(),
@@ -96,7 +189,9 @@ pub fn render(
                     } else {
                         "Show raw JSON"
                     })
-                    .on_click(move |_, window, cx| on_toggle_raw(window, cx)),
+                    .on_click(move |_, _, cx| {
+                        let _ = toggle.update(cx, |view, cx| view.toggle_raw(cx));
+                    }),
             )
             .when(show_raw, |this| {
                 this.child(

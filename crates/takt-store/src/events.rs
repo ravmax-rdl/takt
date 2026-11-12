@@ -2,8 +2,8 @@ use chrono_tz::Tz;
 use rusqlite::{OptionalExtension, Transaction, params};
 use takt_google::model::{EventFields, Item};
 
-use crate::convert::{EventIndex, Kind, exception_of, span_of, when_of, zone};
-use crate::{ChangeSet, Store, StoreError, TimeSpan};
+use crate::convert::{EventIndex, Kind, encode_when, exception_of, span_of, when_of, zone};
+use crate::{ChangeSet, Store, StoreError, TimeSpan, When};
 
 const UPSERT_EVENT: &str = "
 INSERT INTO events (account_id, calendar_id, event_id, raw_json, kind, status, ical_uid, recurring_event_id,
@@ -111,6 +111,55 @@ impl Store {
         }
         tx.commit()?;
         Ok(changes)
+    }
+
+    /// Stores one event as Google returned it from a write. The calendar's
+    /// sync token is left alone, so the next sync returns the event again and
+    /// stores the same row.
+    pub fn apply_event(
+        &mut self,
+        account_id: &str,
+        calendar_id: &str,
+        item: &Item<EventFields>,
+    ) -> Result<ChangeSet, StoreError> {
+        self.apply_events_page(account_id, calendar_id, std::slice::from_ref(item), None)
+    }
+
+    /// Records a delete Google accepted, the way the next sync would: a
+    /// single event or a series goes (a series with its exceptions), and an
+    /// occurrence of a series stays as a cancelled exception that hides it.
+    ///
+    /// `instance` names the series and original start of an occurrence that
+    /// has no row of its own yet. Empty when there is nothing to record.
+    pub fn mark_event_deleted(
+        &mut self,
+        account_id: &str,
+        calendar_id: &str,
+        event_id: &str,
+        instance: Option<(&str, When)>,
+    ) -> Result<ChangeSet, StoreError> {
+        let cancelled = match (self.event_raw(account_id, calendar_id, event_id)?, instance) {
+            (Some(mut raw), _) => {
+                raw["status"] = "cancelled".into();
+                raw
+            }
+            (None, Some((series_id, original_start))) => {
+                let key = if original_start.is_all_day() {
+                    "date"
+                } else {
+                    "dateTime"
+                };
+                serde_json::json!({
+                    "id": event_id,
+                    "status": "cancelled",
+                    "recurringEventId": series_id,
+                    "originalStartTime": {key: encode_when(&original_start)},
+                })
+            }
+            (None, None) => return Ok(ChangeSet::default()),
+        };
+        let item = Item::from_value(cancelled).map_err(|e| StoreError::Corrupt(e.to_string()))?;
+        self.apply_event(account_id, calendar_id, &item)
     }
 
     /// After a 410: forget the calendar's events and token so it fully re-syncs.

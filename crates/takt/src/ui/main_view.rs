@@ -1,4 +1,7 @@
+use std::cell::Cell;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::time::Duration;
 
 use async_channel::{Receiver, Sender};
@@ -13,13 +16,15 @@ use crate::agenda::RowKey;
 use crate::config::ViewSettings;
 use crate::grid::Chip;
 use crate::keys::{
-    CONTEXT, CloseDetail, GRID_CONTEXT, GridDown, GridUp, JumpToToday, NextDay, NextEvent,
-    NextPeriod, OpenSelected, PreviousDay, PreviousEvent, PreviousPeriod, PreviousRow, ShowAgenda,
-    ShowDay, ShowMonth, ShowWeek, SyncNow,
+    CONTEXT, CloseDetail, DeleteEvent, EditEvent, GRID_CONTEXT, GridDown, GridUp, JumpToToday,
+    NewEvent, NextDay, NextEvent, NextPeriod, OpenSelected, PreviousDay, PreviousEvent,
+    PreviousPeriod, PreviousRow, ShowAgenda, ShowDay, ShowMonth, ShowWeek, SyncNow,
 };
 use crate::model::{CalendarModel, ModelEvent, ModelOptions, Snapshot};
 use crate::ui::agenda_list::AgendaDelegate;
-use crate::ui::detail_panel::{self, DetailContent};
+use crate::ui::detail_panel::{self, DetailActions, DetailContent};
+use crate::ui::editing::{Drag, EventRef, Pending};
+use crate::ui::editor::EventEditor;
 use crate::ui::grid_common::GridState;
 use crate::ui::mini_calendar::{self, MiniCalendar, shift_month};
 use crate::ui::toolbar::{self, TOOLBAR_HEIGHT};
@@ -32,24 +37,45 @@ const STATUS_TICK: Duration = Duration::from_secs(15);
 const STATUS_BAR_HEIGHT: f32 = 26.;
 
 pub struct MainView {
-    model: Entity<CalendarModel>,
-    list: Entity<ListState<AgendaDelegate>>,
-    commands: Sender<Command>,
+    pub(super) model: Entity<CalendarModel>,
+    pub(super) list: Entity<ListState<AgendaDelegate>>,
+    pub(super) commands: Sender<Command>,
     /// Holds the keyboard focus while a grid is shown.
     grid_focus: FocusHandle,
-    grid_scroll: ScrollHandle,
+    pub(super) grid_scroll: ScrollHandle,
     /// Scroll the time grid to the current hour on its next draw.
     scroll_pending: bool,
     /// The event selected in a grid.
-    selected: Option<RowKey>,
+    pub(super) selected: Option<RowKey>,
     /// The first day of the month the mini calendar shows.
     mini_month: NaiveDate,
-    detail: Option<DetailContent>,
+    pub(super) detail: Option<DetailContent>,
     /// The row or event `detail` was opened from.
-    detail_key: Option<RowKey>,
+    pub(super) detail_key: Option<RowKey>,
+    /// What can be done with the event in `detail`.
+    detail_actions: DetailActions,
     show_raw: bool,
     /// The read behind the detail being opened; a newer open replaces (cancels) it.
-    detail_load: Option<Task<()>>,
+    pub(super) detail_load: Option<Task<()>>,
+    /// The event editor, shown in place of the detail panel.
+    pub(super) editor: Option<Entity<EventEditor>>,
+    pub(super) editor_events: Option<Subscription>,
+    /// The event `editor` is changing; `None` for a new one.
+    pub(super) editing: Option<EventRef>,
+    /// Writes sent to sync and not yet answered.
+    pub(super) pending: HashMap<u64, Pending>,
+    pub(super) next_write: u64,
+    /// The last problem shown as a notification.
+    pub(super) last_notice: Option<String>,
+    pub(super) drag: Option<Drag>,
+    /// A drag just ended on an event: its click must not also select it.
+    pub(super) suppress_click: bool,
+    /// An element already took the mouse press now being delivered.
+    pub(super) press_claimed: bool,
+    /// Where the time grid's day columns were last drawn.
+    pub(super) time_area: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// Where the month's weeks, or a week's all-day strip, were last drawn.
+    pub(super) day_area: Rc<Cell<Option<Bounds<Pixels>>>>,
     _subscriptions: Vec<Subscription>,
     _tasks: Vec<Task<()>>,
 }
@@ -59,7 +85,7 @@ fn month_start(date: NaiveDate) -> NaiveDate {
 }
 
 /// The chip drawn for `key` in the snapshot's grid, wherever it is.
-fn find_chip<'a>(snapshot: &'a Snapshot, key: &RowKey) -> Option<&'a Chip> {
+pub(super) fn find_chip<'a>(snapshot: &'a Snapshot, key: &RowKey) -> Option<&'a Chip> {
     let grid = &snapshot.grid;
     grid.days
         .iter()
@@ -137,21 +163,27 @@ impl MainView {
         };
         let list = cx.new(|cx| ListState::new(delegate, window, cx).selectable(true));
 
-        let subscriptions = vec![
-            cx.subscribe_in(&model, window, |this, _, _: &ModelEvent, window, cx| {
-                this.on_reloaded(window, cx)
-            }),
-            cx.subscribe_in(&list, window, |this, _, event: &ListEvent, window, cx| {
-                this.on_list_event(event, window, cx)
-            }),
-            cx.observe_window_activation(window, |this, window, cx| {
-                let active = window.is_window_active();
-                let _ = this.commands.try_send(Command::WindowFocus(active));
-                if active {
-                    this.model.update(cx, |m, cx| m.refresh_today(cx));
-                }
-            }),
-        ];
+        let subscriptions =
+            vec![
+                cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| {
+                    match event {
+                        ModelEvent::Reloaded => this.on_reloaded(window, cx),
+                        ModelEvent::WriteDone { id, result } => {
+                            this.on_write_done(*id, result, window, cx)
+                        }
+                    }
+                }),
+                cx.subscribe_in(&list, window, |this, _, event: &ListEvent, window, cx| {
+                    this.on_list_event(event, window, cx)
+                }),
+                cx.observe_window_activation(window, |this, window, cx| {
+                    let active = window.is_window_active();
+                    let _ = this.commands.try_send(Command::WindowFocus(active));
+                    if active {
+                        this.model.update(cx, |m, cx| m.refresh_today(cx));
+                    }
+                }),
+            ];
 
         // Weak, so the bridge ends once the model is gone.
         let bridge_model = model.downgrade();
@@ -192,8 +224,20 @@ impl MainView {
             mini_month: month_start(today),
             detail: None,
             detail_key: None,
+            detail_actions: DetailActions::default(),
             show_raw: false,
             detail_load: None,
+            editor: None,
+            editor_events: None,
+            editing: None,
+            pending: HashMap::new(),
+            next_write: 0,
+            last_notice: None,
+            drag: None,
+            suppress_click: false,
+            press_claimed: false,
+            time_area: Rc::default(),
+            day_area: Rc::default(),
             _subscriptions: subscriptions,
             _tasks: vec![bridge, ticker],
         };
@@ -211,7 +255,7 @@ impl MainView {
     }
 
     /// Gives the keyboard to whichever of the agenda list and the grid is shown.
-    fn focus_view(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn focus_view(&self, window: &mut Window, cx: &mut Context<Self>) {
         if self.model.read(cx).view() == ViewKind::Agenda {
             self.list.update(cx, |list, cx| list.focus(window, cx));
         } else {
@@ -221,6 +265,7 @@ impl MainView {
 
     fn on_reloaded(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.refresh_list(window, cx);
+        self.settle_drag();
         let snapshot = &self.model.read(cx).snapshot;
         // An event that left the grid is no longer selected.
         if snapshot.view != ViewKind::Agenda
@@ -228,6 +273,14 @@ impl MainView {
             && !reading_order(snapshot).iter().any(|(_, k)| k == key)
         {
             self.selected = None;
+        }
+        // Open details follow the event: it may have just been changed.
+        if let (Some(key @ RowKey::Event { .. }), Some(DetailContent::Event(shown))) =
+            (self.detail_key.clone(), &self.detail)
+        {
+            let when =
+                find_chip(snapshot, &key).map_or_else(|| shown.when.clone(), |c| c.when.clone());
+            self.open_event_detail(key, when, cx);
         }
         cx.notify();
     }
@@ -325,6 +378,11 @@ impl MainView {
             .find(|a| a.account_id == account_id)
             .map(|a| a.email.clone())
             .unwrap_or_default();
+        let writable = model.snapshot.calendars.iter().any(|c| {
+            c.account_id == account_id
+                && c.calendar_id == calendar_id
+                && matches!(c.access_role.as_deref(), Some("owner" | "writer"))
+        });
         let read = cx.background_spawn(async move {
             takt_store::Store::open_read_only(&db)?.event_raw(&account_id, &calendar_id, &event_id)
         });
@@ -337,8 +395,24 @@ impl MainView {
                         let mut detail = crate::detail::event_detail(&raw, when, calendar, account);
                         detail.zone_note = crate::detail::zone_note(&raw, tz, use_24h);
                         view.detail = Some(DetailContent::Event(Box::new(detail)));
+                        view.detail_actions = DetailActions {
+                            writable,
+                            response: raw["attendees"].as_array().and_then(|guests| {
+                                let me =
+                                    guests.iter().find(|g| g["self"].as_bool() == Some(true))?;
+                                Some(
+                                    me["responseStatus"]
+                                        .as_str()
+                                        .unwrap_or("needsAction")
+                                        .to_owned(),
+                                )
+                            }),
+                        };
+                        // A refresh of the same event keeps the raw JSON open.
+                        if view.detail_key.as_ref() != Some(&key) {
+                            view.show_raw = false;
+                        }
                         view.detail_key = Some(key);
-                        view.show_raw = false;
                     }
                     Ok(None) => {
                         view.detail = None;
@@ -363,8 +437,14 @@ impl MainView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.take_suppressed_click() {
+            return;
+        }
         self.selected = Some(key.clone());
-        self.open_event_detail(key, when, cx);
+        // With the editor open, a click only selects.
+        if self.editor.is_none() {
+            self.open_event_detail(key, when, cx);
+        }
         self.focus_view(window, cx);
         cx.notify();
     }
@@ -567,6 +647,34 @@ impl MainView {
         }
     }
 
+    fn on_new_event(&mut self, _: &NewEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.new_event(None, window, cx);
+    }
+
+    fn on_edit_event(&mut self, _: &EditEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(event) = self.target_event(cx) {
+            self.edit_event(event, window, cx);
+        }
+    }
+
+    fn on_delete_event(&mut self, _: &DeleteEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(event) = self.target_event(cx) {
+            self.delete_event(event, window, cx);
+        }
+    }
+
+    /// The event the detail panel shows, for its buttons.
+    pub(crate) fn shown_event(&self, cx: &App) -> Option<EventRef> {
+        self.detail_key
+            .as_ref()
+            .and_then(|key| self.find_event(key, cx))
+    }
+
+    pub(crate) fn toggle_raw(&mut self, cx: &mut Context<Self>) {
+        self.show_raw = !self.show_raw;
+        cx.notify();
+    }
+
     fn show_day(&mut self, _: &ShowDay, window: &mut Window, cx: &mut Context<Self>) {
         self.show_view(ViewKind::Day, window, cx);
     }
@@ -599,6 +707,10 @@ impl MainView {
             selected: self.selected.as_ref(),
             today: model.today(),
             anchor: model.anchor(),
+            use_24h: snapshot.use_24h,
+            drag: self.drag.as_ref(),
+            time_area: &self.time_area,
+            day_area: &self.day_area,
         };
         if snapshot.view == ViewKind::Month {
             let height = f32::from(window.viewport_size().height)
@@ -654,10 +766,38 @@ impl Render for MainView {
             cx,
         );
         let title = view::title(model.view(), model.anchor(), model.from, model.to);
-        let toggle = this.clone();
-        v_flex()
-            .size_full()
+        // Window-wide, so a drag keeps following the pointer over anything.
+        let pointer = this.clone();
+        let pointer_events = canvas(
+            |_, _, _| (),
+            move |_, _, window, _| {
+                let (moving, released) = (pointer.clone(), pointer.clone());
+                window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+                    if phase == DispatchPhase::Capture {
+                        let pressed = event.pressed_button == Some(MouseButton::Left);
+                        let _ =
+                            moving.update(cx, |view, cx| view.drag_to(event.position, pressed, cx));
+                    }
+                });
+                window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Capture && event.button == MouseButton::Left {
+                        let _ = released.update(cx, |view, cx| view.end_drag(window, cx));
+                    }
+                });
+            },
+        )
+        .absolute()
+        .size_0();
+        // The editor sits beside this context, not inside it: its inputs must
+        // not trigger the single-letter keys.
+        let main = h_flex()
+            .flex_1()
+            .min_w_0()
+            .h_full()
             .key_context(CONTEXT)
+            .on_action(cx.listener(Self::on_new_event))
+            .on_action(cx.listener(Self::on_edit_event))
+            .on_action(cx.listener(Self::on_delete_event))
             .on_action(cx.listener(Self::close_detail))
             .on_action(cx.listener(Self::previous_row))
             .on_action(cx.listener(Self::jump_to_today))
@@ -675,33 +815,37 @@ impl Render for MainView {
             .on_action(cx.listener(Self::show_week))
             .on_action(cx.listener(Self::show_month))
             .on_action(cx.listener(Self::show_agenda))
+            .child(sidebar::render(model, &self.commands, mini, cx))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .child(toolbar::render(title, model.view(), &this, cx))
+                    .child(body),
+            )
+            .when_some(
+                self.detail.as_ref().filter(|_| self.editor.is_none()),
+                |row, detail| {
+                    row.child(detail_panel::render(
+                        detail,
+                        self.show_raw,
+                        &self.detail_actions,
+                        &this,
+                        cx,
+                    ))
+                },
+            );
+        v_flex()
+            .size_full()
             .text_color(cx.theme().foreground)
+            .child(pointer_events)
             .child(
                 h_flex()
                     .flex_1()
                     .min_h_0()
-                    .child(sidebar::render(model, &self.commands, mini, cx))
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .h_full()
-                            .child(toolbar::render(title, model.view(), &this, cx))
-                            .child(body),
-                    )
-                    .when_some(self.detail.as_ref(), |row, detail| {
-                        row.child(detail_panel::render(
-                            detail,
-                            self.show_raw,
-                            move |_, cx| {
-                                let _ = toggle.update(cx, |view, cx| {
-                                    view.show_raw = !view.show_raw;
-                                    cx.notify();
-                                });
-                            },
-                            cx,
-                        ))
-                    }),
+                    .child(main)
+                    .children(self.editor.clone()),
             )
             .child(status_bar::render(model, cx))
     }

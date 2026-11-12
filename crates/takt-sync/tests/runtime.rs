@@ -423,3 +423,76 @@ async fn offline_account_recovers_on_sync_now_and_keeps_its_rows() {
     );
     handle.shutdown();
 }
+
+fn create(id: u64, account: &str) -> Command {
+    Command::Write(Box::new(WriteRequest {
+        id,
+        account_id: account.into(),
+        calendar_id: "cal".into(),
+        op: WriteOp::Create {
+            body: json!({"id": "new01", "summary": "Lunch"}),
+        },
+        notify_guests: false,
+    }))
+}
+
+#[tokio::test]
+async fn a_write_command_is_stored_announced_and_answered() {
+    let rig = Rig::new().await;
+    rig.seed_account();
+    rig.mount_happy_google().await;
+    Mock::given(method("POST"))
+        .and(path("/calendar/v3/calendars/cal/events"))
+        .respond_with(ok(event("new01", 20)))
+        .expect(1)
+        .mount(&rig.server)
+        .await;
+    let handle = rig.start(no_browser());
+    wait_for(&handle.events, synced("acc")).await;
+
+    handle.commands.send(create(41, "acc")).await.unwrap();
+    // The change is announced before the answer, so the UI can re-read first.
+    wait_for(&handle.events, |ev| {
+        matches!(ev, SyncEvent::Changed { changes, .. } if changes.calendars.contains("cal") && !changes.everything)
+    })
+    .await;
+    let done = wait_for(&handle.events, |ev| {
+        matches!(ev, SyncEvent::WriteDone { .. })
+    })
+    .await;
+    assert_eq!(
+        done,
+        SyncEvent::WriteDone {
+            id: 41,
+            result: Ok(WriteOutcome {
+                calendar_id: "cal".into(),
+                event_id: "new01".into()
+            })
+        }
+    );
+    assert_eq!(stored_event_ids(&rig), ["new01"]);
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn a_write_for_an_account_that_is_not_running_is_refused() {
+    let rig = Rig::new().await;
+    rig.seed_account();
+    rig.mount_happy_google().await;
+    let handle = rig.start(no_browser());
+    wait_for(&handle.events, synced("acc")).await;
+
+    handle.commands.send(create(42, "nobody")).await.unwrap();
+    let done = wait_for(&handle.events, |ev| {
+        matches!(ev, SyncEvent::WriteDone { .. })
+    })
+    .await;
+    assert_eq!(
+        done,
+        SyncEvent::WriteDone {
+            id: 42,
+            result: Err(WriteError::NotSignedIn)
+        }
+    );
+    handle.shutdown();
+}

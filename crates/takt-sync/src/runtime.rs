@@ -15,7 +15,7 @@ use takt_store::{AccountStatus, Store};
 use tokio::sync::{mpsc, watch};
 use tokio::task::{JoinError, JoinHandle};
 
-use crate::{AccountEngine, Command, SyncEvent, SyncState};
+use crate::{AccountEngine, Command, SyncEvent, SyncState, WriteError};
 
 const OFFLINE_FIRST_RETRY: Duration = Duration::from_secs(5);
 
@@ -101,9 +101,44 @@ struct Shared {
     events: async_channel::Sender<SyncEvent>,
     focused: watch::Receiver<bool>,
     wake: watch::Receiver<u64>,
+    /// The engine of each account whose loop is running, for writes.
+    engines: Mutex<HashMap<String, Arc<AccountEngine>>>,
+}
+
+/// Keeps an account's engine findable for writes while its loop runs.
+struct Registered {
+    shared: Arc<Shared>,
+    account_id: String,
+    engine: Arc<AccountEngine>,
+}
+
+impl Drop for Registered {
+    fn drop(&mut self) {
+        let mut engines = self.shared.engines();
+        // A loop started since for the same account has put its own engine there.
+        if engines
+            .get(&self.account_id)
+            .is_some_and(|current| Arc::ptr_eq(current, &self.engine))
+        {
+            engines.remove(&self.account_id);
+        }
+    }
 }
 
 impl Shared {
+    fn engines(&self) -> MutexGuard<'_, HashMap<String, Arc<AccountEngine>>> {
+        self.engines.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn register(self: &Arc<Self>, account_id: &str, engine: &Arc<AccountEngine>) -> Registered {
+        self.engines().insert(account_id.to_owned(), engine.clone());
+        Registered {
+            shared: self.clone(),
+            account_id: account_id.to_owned(),
+            engine: engine.clone(),
+        }
+    }
+
     /// The store, even if a thread panicked while holding it: each write is
     /// one transaction, so a panic cannot leave it half-applied.
     fn store(&self) -> MutexGuard<'_, Store> {
@@ -175,6 +210,7 @@ async fn run(
         events,
         focused,
         wake,
+        engines: Mutex::default(),
     });
     let (sign_in_tx, mut sign_ins) = mpsc::unbounded_channel::<Result<SignedIn, GoogleError>>();
     let mut loops: HashMap<String, AbortOnDrop<()>> = HashMap::new();
@@ -219,6 +255,21 @@ async fn run(
                 }
                 Ok(Command::SetCalendarVisible { account_id, calendar_id, visible }) => {
                     set_calendar_visible(&shared, account_id, &calendar_id, visible);
+                }
+                Ok(Command::Write(request)) => {
+                    // Off this loop, so a slow write holds up nothing else.
+                    let engine = shared.engines().get(&request.account_id).cloned();
+                    let shared = shared.clone();
+                    tokio::spawn(async move {
+                        let result = match engine {
+                            Some(engine) => engine.write(&request).await,
+                            None => Err(WriteError::NotSignedIn),
+                        };
+                        if let Err(error) = &result {
+                            tracing::warn!(account = %request.account_id, %error, "write failed");
+                        }
+                        shared.send(SyncEvent::WriteDone { id: request.id, result });
+                    });
                 }
                 Ok(Command::WindowFocus(focused)) => {
                     focus_tx.send_replace(focused);
@@ -371,12 +422,13 @@ async fn account_loop(
     }
     let client = GoogleClient::new(shared.http.clone(), shared.endpoints.clone(), auth)
         .with_retry(shared.retry.clone());
-    let engine = AccountEngine::new(
+    let engine = Arc::new(AccountEngine::new(
         account_id.clone(),
         client,
         shared.store.clone(),
         shared.events.clone(),
-    );
+    ));
+    let _registered = shared.register(&account_id, &engine);
     let mut offline_since: Option<DateTime<Utc>> = None;
     loop {
         let with_meta = engine.meta_due(shared.intervals.meta);

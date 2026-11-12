@@ -54,6 +54,8 @@ pub struct AgendaRow {
     pub is_task: bool,
     pub completed: bool,
     pub warning: bool,
+    /// An event's whole start and end, whichever day the row is under.
+    pub times: Option<(When, When)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -172,6 +174,7 @@ pub fn build_agenda(input: &AgendaInput) -> Vec<DaySection> {
                 is_task: false,
                 completed: false,
                 warning: o.recurrence_error,
+                times: Some((o.start, o.end)),
             };
             let key = (
                 group,
@@ -206,6 +209,7 @@ pub fn build_agenda(input: &AgendaInput) -> Vec<DaySection> {
             is_task: true,
             completed: t.completed,
             warning: false,
+            times: None,
         };
         let key = (
             1,

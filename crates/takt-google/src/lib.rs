@@ -7,6 +7,7 @@ mod error;
 pub mod model;
 mod token_store;
 
+pub use api::{SendUpdates, new_event_id};
 pub use auth::{
     Auth, IdClaims, OAuthClient, Pkce, Redirect, SCOPES, SignedIn, authorization_url,
     decode_id_token, exchange_code, parse_redirect_request_line, sign_in,

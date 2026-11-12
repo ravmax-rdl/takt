@@ -3,6 +3,8 @@
 pub mod agenda;
 pub mod config;
 pub mod detail;
+pub mod draft;
+pub mod entry;
 pub mod grid;
 pub mod keys;
 pub mod layout;
