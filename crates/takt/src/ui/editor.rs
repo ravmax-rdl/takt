@@ -81,7 +81,7 @@ pub struct SaveRequest {
 }
 
 pub enum EditorEvent {
-    Save(SaveRequest),
+    Save(Box<SaveRequest>),
     /// Closed without a write: cancelled, or saved with nothing changed.
     Close,
     /// The Delete button, for the event being edited.
@@ -222,7 +222,10 @@ impl EventEditor {
             use_24h,
             today,
         } = setup;
-        let input = |value: String, placeholder: &'static str, window: &mut Window, cx: &mut Context<Self>| {
+        let input = |value: String,
+                     placeholder: &'static str,
+                     window: &mut Window,
+                     cx: &mut Context<Self>| {
             cx.new(|cx| {
                 InputState::new(window, cx)
                     .placeholder(placeholder)
@@ -315,7 +318,10 @@ impl EventEditor {
                     let SelectEvent::Confirm(Some(label)) = event else {
                         return;
                     };
-                    if let Some(ix) = this.calendars.iter().position(|c| c.label == label.as_ref())
+                    if let Some(ix) = this
+                        .calendars
+                        .iter()
+                        .position(|c| c.label == label.as_ref())
                     {
                         this.set_calendar(ix, cx);
                     }
@@ -387,7 +393,8 @@ impl EventEditor {
         if ix >= self.calendars.len() || ix == self.calendar {
             return;
         }
-        let account_changed = self.calendars[ix].account_id != self.calendars[self.calendar].account_id;
+        let account_changed =
+            self.calendars[ix].account_id != self.calendars[self.calendar].account_id;
         self.calendar = ix;
         if account_changed {
             // Colour IDs belong to an account's palette.
@@ -426,7 +433,9 @@ impl EventEditor {
         let Some(start) = self.typed_start(cx) else {
             return;
         };
-        let moved = self.last_start.map_or(TimeDelta::zero(), |last| start - last);
+        let moved = self
+            .last_start
+            .map_or(TimeDelta::zero(), |last| start - last);
         self.last_start = Some(start);
         if moved.is_zero() {
             return;
@@ -447,7 +456,12 @@ impl EventEditor {
         }
     }
 
-    pub(crate) fn set_all_day(&mut self, all_day: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn set_all_day(
+        &mut self,
+        all_day: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if all_day == self.all_day {
             return;
         }
@@ -558,9 +572,9 @@ impl EventEditor {
             let zone = if zone_name.is_empty() {
                 self.tz
             } else {
-                zone_name
-                    .parse::<Tz>()
-                    .map_err(|_| format!("\"{zone_name}\" is not a time zone name like Europe/Berlin."))?
+                zone_name.parse::<Tz>().map_err(|_| {
+                    format!("\"{zone_name}\" is not a time zone name like Europe/Berlin.")
+                })?
             };
             DraftTime::Timed {
                 start: first.and_time(self.time(&self.start_time, "start", cx)?),
@@ -676,7 +690,7 @@ impl EventEditor {
         };
         self.problem = None;
         self.saving = true;
-        cx.emit(EditorEvent::Save(request));
+        cx.emit(EditorEvent::Save(Box::new(request)));
         cx.notify();
     }
 
@@ -756,9 +770,8 @@ impl EventEditor {
         };
         let raw = &existing.original;
         if existing.instance.is_some() || raw["recurringEventId"].is_string() {
-            remarks.push(
-                "Part of a repeating event. Changes apply to this occurrence only.".into(),
-            );
+            remarks
+                .push("Part of a repeating event. Changes apply to this occurrence only.".into());
         }
         if raw["attendees"].is_array() && raw["organizer"]["self"].as_bool() != Some(true) {
             remarks.push(
@@ -787,7 +800,11 @@ fn section(text: &'static str, cx: &App) -> Div {
 
 /// A small button that is one of several choices.
 fn choice(id: impl Into<ElementId>, text: impl Into<SharedString>, chosen: bool) -> Button {
-    Button::new(id).ghost().xsmall().label(text).selected(chosen)
+    Button::new(id)
+        .ghost()
+        .xsmall()
+        .label(text)
+        .selected(chosen)
 }
 
 fn response_label(response: &str) -> &'static str {
@@ -1066,7 +1083,14 @@ impl Render for EventEditor {
             Meet::Existing(link) => h_flex()
                 .gap_2()
                 .items_center()
-                .child(div().flex_1().min_w_0().truncate().text_sm().child(link.clone()))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_sm()
+                        .child(link.clone()),
+                )
                 .child(
                     Button::new("editor-meet-remove")
                         .ghost()
@@ -1101,7 +1125,10 @@ impl Render for EventEditor {
                 .into_any_element(),
         };
 
-        let kind_button = |tag: KindTag, id: &'static str, text: &'static str, cx: &mut Context<Self>| {
+        let kind_button = |tag: KindTag,
+                           id: &'static str,
+                           text: &'static str,
+                           cx: &mut Context<Self>| {
             choice(id, text, self.kind == tag).on_click(cx.listener(move |this, _, window, cx| {
                 this.kind = tag;
                 if tag == KindTag::Away {
@@ -1113,18 +1140,22 @@ impl Render for EventEditor {
                 cx.notify();
             }))
         };
-        let decline_button = |mode: AutoDecline, id: &'static str, text: &'static str, cx: &mut Context<Self>| {
+        let decline_button = |mode: AutoDecline,
+                              id: &'static str,
+                              text: &'static str,
+                              cx: &mut Context<Self>| {
             choice(id, text, self.decline == mode).on_click(cx.listener(move |this, _, _, cx| {
                 this.decline = mode;
                 cx.notify();
             }))
         };
-        let place_button = |tag: PlaceTag, id: &'static str, text: &'static str, cx: &mut Context<Self>| {
-            choice(id, text, self.place == tag).on_click(cx.listener(move |this, _, _, cx| {
-                this.place = tag;
-                cx.notify();
-            }))
-        };
+        let place_button =
+            |tag: PlaceTag, id: &'static str, text: &'static str, cx: &mut Context<Self>| {
+                choice(id, text, self.place == tag).on_click(cx.listener(move |this, _, _, cx| {
+                    this.place = tag;
+                    cx.notify();
+                }))
+            };
         let kind_options = match self.kind {
             _ if self.other_kind.is_some() => None,
             KindTag::Event => None,
@@ -1136,9 +1167,24 @@ impl Render for EventEditor {
                             .gap_1()
                             .items_center()
                             .child(div().text_sm().child("Decline meetings:"))
-                            .child(decline_button(AutoDecline::None, "editor-decline-none", "None", cx))
-                            .child(decline_button(AutoDecline::New, "editor-decline-new", "New ones", cx))
-                            .child(decline_button(AutoDecline::All, "editor-decline-all", "All", cx)),
+                            .child(decline_button(
+                                AutoDecline::None,
+                                "editor-decline-none",
+                                "None",
+                                cx,
+                            ))
+                            .child(decline_button(
+                                AutoDecline::New,
+                                "editor-decline-new",
+                                "New ones",
+                                cx,
+                            ))
+                            .child(decline_button(
+                                AutoDecline::All,
+                                "editor-decline-all",
+                                "All",
+                                cx,
+                            )),
                     )
                     .child(Input::new(&self.message).small())
                     .when(self.kind == KindTag::Focus, |column| {
@@ -1159,9 +1205,24 @@ impl Render for EventEditor {
                     .child(
                         h_flex()
                             .gap_1()
-                            .child(place_button(PlaceTag::Home, "editor-place-home", "Home", cx))
-                            .child(place_button(PlaceTag::Office, "editor-place-office", "Office", cx))
-                            .child(place_button(PlaceTag::Custom, "editor-place-custom", "Somewhere else", cx)),
+                            .child(place_button(
+                                PlaceTag::Home,
+                                "editor-place-home",
+                                "Home",
+                                cx,
+                            ))
+                            .child(place_button(
+                                PlaceTag::Office,
+                                "editor-place-office",
+                                "Office",
+                                cx,
+                            ))
+                            .child(place_button(
+                                PlaceTag::Custom,
+                                "editor-place-custom",
+                                "Somewhere else",
+                                cx,
+                            )),
                     )
                     .when(self.place != PlaceTag::Home, |column| {
                         column.child(Input::new(&self.place_label).small())
@@ -1172,104 +1233,121 @@ impl Render for EventEditor {
             h_flex()
                 .gap_1()
                 .flex_wrap()
-                .child(kind_button(KindTag::Event, "editor-kind-event", "Event", cx))
-                .child(kind_button(KindTag::Focus, "editor-kind-focus", "Focus time", cx))
-                .child(kind_button(KindTag::Away, "editor-kind-away", "Out of office", cx))
-                .child(kind_button(KindTag::Place, "editor-kind-place", "Working location", cx))
+                .child(kind_button(
+                    KindTag::Event,
+                    "editor-kind-event",
+                    "Event",
+                    cx,
+                ))
+                .child(kind_button(
+                    KindTag::Focus,
+                    "editor-kind-focus",
+                    "Focus time",
+                    cx,
+                ))
+                .child(kind_button(
+                    KindTag::Away,
+                    "editor-kind-away",
+                    "Out of office",
+                    cx,
+                ))
+                .child(kind_button(
+                    KindTag::Place,
+                    "editor-kind-place",
+                    "Working location",
+                    cx,
+                ))
         });
 
-        let body = v_flex()
-            .gap_3()
-            .child(buttons)
-            .child(div().text_lg().font_semibold().child(self.header()))
-            .when_some(self.notice.clone(), |column, notice| {
-                column.child(
+        let body =
+            v_flex()
+                .gap_3()
+                .child(buttons)
+                .child(div().text_lg().font_semibold().child(self.header()))
+                .when_some(self.notice.clone(), |column, notice| {
+                    column.child(
+                        div()
+                            .p_2()
+                            .rounded_md()
+                            .bg(theme.warning.opacity(0.15))
+                            .text_sm()
+                            .child(notice),
+                    )
+                })
+                .when_some(self.problem.clone(), |column, problem| {
+                    column.child(
+                        div()
+                            .id("editor-problem")
+                            .text_sm()
+                            .text_color(theme.danger)
+                            .child(problem),
+                    )
+                })
+                .children(self.remarks().into_iter().map(|remark| {
                     div()
-                        .p_2()
-                        .rounded_md()
-                        .bg(theme.warning.opacity(0.15))
-                        .text_sm()
-                        .child(notice),
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(remark)
+                }))
+                .child(Input::new(&self.title))
+                .child(when)
+                .child(
+                    section("Calendar", cx).child(
+                        Select::new(&self.calendar_select)
+                            .small()
+                            .disabled(occurrence || self.calendars.len() < 2),
+                    ),
                 )
-            })
-            .when_some(self.problem.clone(), |column, problem| {
-                column.child(
-                    div()
-                        .id("editor-problem")
-                        .text_sm()
-                        .text_color(theme.danger)
-                        .child(problem),
+                .child(section("Colour", cx).child(h_flex().gap_1().flex_wrap().children(swatches)))
+                .child(section("Location", cx).child(Input::new(&self.location).small()))
+                .child(section("Video call", cx).child(meet))
+                .child(section("Description", cx).child(Textarea::new(&self.description)))
+                .child(
+                    section("Guests", cx)
+                        .children(guest_rows)
+                        .child(Input::new(&self.guest).small())
+                        .children(reply)
+                        .when(has_others, |column| {
+                            column.child(
+                                Checkbox::new("editor-notify")
+                                    .label("Email guests about this")
+                                    .checked(self.notify)
+                                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                        this.notify = *checked;
+                                        cx.notify();
+                                    })),
+                            )
+                        }),
                 )
-            })
-            .children(self.remarks().into_iter().map(|remark| {
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(remark)
-            }))
-            .child(Input::new(&self.title))
-            .child(when)
-            .child(
-                section("Calendar", cx).child(
-                    Select::new(&self.calendar_select)
-                        .small()
-                        .disabled(occurrence || self.calendars.len() < 2),
-                ),
-            )
-            .child(section("Colour", cx).child(h_flex().gap_1().flex_wrap().children(swatches)))
-            .child(section("Location", cx).child(Input::new(&self.location).small()))
-            .child(section("Video call", cx).child(meet))
-            .child(section("Description", cx).child(Textarea::new(&self.description)))
-            .child(
-                section("Guests", cx)
-                    .children(guest_rows)
-                    .child(Input::new(&self.guest).small())
-                    .children(reply)
-                    .when(has_others, |column| {
-                        column.child(
-                            Checkbox::new("editor-notify")
-                                .label("Email guests about this")
-                                .checked(self.notify)
+                .child(
+                    section("Reminders", cx)
+                        .child(
+                            Checkbox::new("editor-default-reminders")
+                                .label("The calendar's default reminders")
+                                .checked(self.default_reminders)
                                 .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                                    this.notify = *checked;
+                                    this.default_reminders = *checked;
                                     cx.notify();
                                 })),
                         )
-                    }),
-            )
-            .child(
-                section("Reminders", cx)
-                    .child(
-                        Checkbox::new("editor-default-reminders")
-                            .label("The calendar's default reminders")
-                            .checked(self.default_reminders)
-                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                                this.default_reminders = *checked;
-                                cx.notify();
-                            })),
-                    )
-                    .when(!self.default_reminders, |column| {
-                        column.children(reminder_rows)
-                    })
-                    .child(
-                        h_flex().child(
-                            Button::new("editor-add-reminder")
-                                .ghost()
-                                .xsmall()
-                                .label("+ Add reminder")
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.add_reminder(window, cx)),
-                                ),
+                        .when(!self.default_reminders, |column| {
+                            column.children(reminder_rows)
+                        })
+                        .child(
+                            h_flex().child(
+                                Button::new("editor-add-reminder")
+                                    .ghost()
+                                    .xsmall()
+                                    .label("+ Add reminder")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.add_reminder(window, cx)
+                                    })),
+                            ),
                         ),
-                    ),
-            )
-            .when(kinds.is_some() || kind_options.is_some(), |column| {
-                column.child(
-                    section("Type", cx)
-                        .children(kinds)
-                        .children(kind_options),
                 )
-            });
+                .when(kinds.is_some() || kind_options.is_some(), |column| {
+                    column.child(section("Type", cx).children(kinds).children(kind_options))
+                });
 
         v_flex()
             .id("editor")

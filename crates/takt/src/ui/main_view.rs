@@ -42,7 +42,7 @@ pub struct MainView {
     pub(super) commands: Sender<Command>,
     /// Holds the keyboard focus while a grid is shown.
     grid_focus: FocusHandle,
-    grid_scroll: ScrollHandle,
+    pub(super) grid_scroll: ScrollHandle,
     /// Scroll the time grid to the current hour on its next draw.
     scroll_pending: bool,
     /// The event selected in a grid.
@@ -163,28 +163,27 @@ impl MainView {
         };
         let list = cx.new(|cx| ListState::new(delegate, window, cx).selectable(true));
 
-        let subscriptions = vec![
-            cx.subscribe_in(
-                &model,
-                window,
-                |this, _, event: &ModelEvent, window, cx| match event {
-                    ModelEvent::Reloaded => this.on_reloaded(window, cx),
-                    ModelEvent::WriteDone { id, result } => {
-                        this.on_write_done(*id, result, window, cx)
+        let subscriptions =
+            vec![
+                cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| {
+                    match event {
+                        ModelEvent::Reloaded => this.on_reloaded(window, cx),
+                        ModelEvent::WriteDone { id, result } => {
+                            this.on_write_done(*id, result, window, cx)
+                        }
                     }
-                },
-            ),
-            cx.subscribe_in(&list, window, |this, _, event: &ListEvent, window, cx| {
-                this.on_list_event(event, window, cx)
-            }),
-            cx.observe_window_activation(window, |this, window, cx| {
-                let active = window.is_window_active();
-                let _ = this.commands.try_send(Command::WindowFocus(active));
-                if active {
-                    this.model.update(cx, |m, cx| m.refresh_today(cx));
-                }
-            }),
-        ];
+                }),
+                cx.subscribe_in(&list, window, |this, _, event: &ListEvent, window, cx| {
+                    this.on_list_event(event, window, cx)
+                }),
+                cx.observe_window_activation(window, |this, window, cx| {
+                    let active = window.is_window_active();
+                    let _ = this.commands.try_send(Command::WindowFocus(active));
+                    if active {
+                        this.model.update(cx, |m, cx| m.refresh_today(cx));
+                    }
+                }),
+            ];
 
         // Weak, so the bridge ends once the model is gone.
         let bridge_model = model.downgrade();

@@ -23,9 +23,7 @@ use crate::draft::{
 use crate::entry::next_half_hour;
 use crate::grid::Chip;
 use crate::model::Snapshot;
-use crate::ui::editor::{
-    CalendarChoice, EditorEvent, EditorSetup, EventEditor, Existing,
-};
+use crate::ui::editor::{CalendarChoice, EditorEvent, EditorSetup, EventEditor, Existing};
 use crate::ui::main_view::{MainView, find_chip};
 use crate::ui::time_grid::HOUR_HEIGHT;
 use crate::view::ViewKind;
@@ -287,28 +285,50 @@ pub(super) fn prepare(raw: Option<Value>, event: &EventRef) -> Result<Existing, 
     })
 }
 
-/// Asks before a change. When the change can email guests, offers to do it
-/// with or without the email; `chosen` gets that answer.
-fn confirm(
+/// Called with whether to email the guests.
+type Chosen = Rc<dyn Fn(bool, &mut Window, &mut App)>;
+type Cancelled = Rc<dyn Fn(&mut Window, &mut App)>;
+
+/// What to ask before a change.
+struct Question {
     title: String,
     description: &'static str,
+    /// The change in one word, for the buttons: "Delete", "Move".
     verb: &'static str,
+    /// The change can email guests: offer to do it with or without.
     guests: bool,
-    chosen: Rc<dyn Fn(bool, &mut Window, &mut App)>,
-    cancelled: Rc<dyn Fn(&mut Window, &mut App)>,
+}
+
+/// Asks before a change; `chosen` gets the answer about emailing guests.
+fn confirm(
+    question: Question,
+    chosen: Chosen,
+    cancelled: Cancelled,
     window: &mut Window,
     cx: &mut App,
 ) {
+    let Question {
+        title,
+        description,
+        verb,
+        guests,
+    } = question;
     let answered = Rc::new(Cell::new(false));
     window.open_alert_dialog(cx, move |dialog, _, _| {
         let dialog = dialog.title(title.clone()).description(description);
-        let on_close = {
+        // However the dialog goes away without an answer, that is a cancel,
+        // told once.
+        let cancel = {
             let (answered, cancelled) = (answered.clone(), cancelled.clone());
-            move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                if !answered.get() {
+            move |window: &mut Window, cx: &mut App| {
+                if !answered.replace(true) {
                     cancelled(window, cx);
                 }
             }
+        };
+        let on_close = {
+            let cancel = cancel.clone();
+            move |_: &ClickEvent, window: &mut Window, cx: &mut App| cancel(window, cx)
         };
         if !guests {
             let (answered, chosen) = (answered.clone(), chosen.clone());
@@ -323,14 +343,17 @@ fn confirm(
                 .on_close(on_close);
         }
         let button = |id: &'static str, label: String, notify: Option<bool>| {
-            let (answered, chosen) = (answered.clone(), chosen.clone());
+            let (answered, chosen, cancel) = (answered.clone(), chosen.clone(), cancel.clone());
             Button::new(id)
                 .small()
                 .label(label)
                 .on_click(move |_, window, cx| {
-                    if let Some(notify) = notify {
-                        answered.set(true);
-                        chosen(notify, window, cx);
+                    match notify {
+                        Some(notify) => {
+                            answered.set(true);
+                            chosen(notify, window, cx);
+                        }
+                        None => cancel(window, cx),
                     }
                     window.close_dialog(cx);
                 })
@@ -448,11 +471,7 @@ impl MainView {
                 Err(error) => {
                     tracing::error!(%error, "cannot read the cache for a change");
                     view.drag = None;
-                    view.notice(
-                        format!("Cannot read the local cache: {error}"),
-                        window,
-                        cx,
-                    );
+                    view.notice(format!("Cannot read the local cache: {error}"), window, cx);
                 }
             });
         })
@@ -496,7 +515,11 @@ impl MainView {
         }
         let calendar = calendars.iter().position(|c| c.primary).unwrap_or(0);
         let time = time.unwrap_or_else(|| {
-            let day = if view == ViewKind::Agenda { today } else { anchor };
+            let day = if view == ViewKind::Agenda {
+                today
+            } else {
+                anchor
+            };
             if view == ViewKind::Month {
                 return DraftTime::AllDay {
                     first: day,
@@ -544,36 +567,41 @@ impl MainView {
         if !self.is_writable(&event.account_id, &event.calendar_id, cx) {
             return self.notice("This calendar is read-only.", window, cx);
         }
-        self.read_then(Some(&event.clone()), window, cx, move |view, read, window, cx| {
-            let model = view.model.read(cx);
-            let (tz, today, use_24h) = (model.tz, model.today(), model.snapshot.use_24h);
-            let calendars = calendar_choices(&model.snapshot, Some(&event.account_id));
-            let prepared = prepare(read.raw, &event).and_then(|existing| {
-                let draft = EventDraft::from_raw(&existing.original, tz)
-                    .ok_or("This event has no time takt can read.")?;
-                let calendar = calendars
-                    .iter()
-                    .position(|c| c.calendar_id == event.calendar_id)
-                    .ok_or("This calendar is read-only.")?;
-                Ok((existing, draft, calendar))
-            });
-            let (existing, draft, calendar) = match prepared {
-                Ok(prepared) => prepared,
-                Err(message) => return view.notice(message, window, cx),
-            };
-            let setup = EditorSetup {
-                existing: Some(existing),
-                draft,
-                calendars,
-                calendar,
-                colors: event_colors(&read.palettes),
-                tz,
-                use_24h,
-                today,
-            };
-            view.editing = Some(event);
-            view.open_editor(setup, window, cx);
-        });
+        self.read_then(
+            Some(&event.clone()),
+            window,
+            cx,
+            move |view, read, window, cx| {
+                let model = view.model.read(cx);
+                let (tz, today, use_24h) = (model.tz, model.today(), model.snapshot.use_24h);
+                let calendars = calendar_choices(&model.snapshot, Some(&event.account_id));
+                let prepared = prepare(read.raw, &event).and_then(|existing| {
+                    let draft = EventDraft::from_raw(&existing.original, tz)
+                        .ok_or("This event has no time takt can read.")?;
+                    let calendar = calendars
+                        .iter()
+                        .position(|c| c.calendar_id == event.calendar_id)
+                        .ok_or("This calendar is read-only.")?;
+                    Ok((existing, draft, calendar))
+                });
+                let (existing, draft, calendar) = match prepared {
+                    Ok(prepared) => prepared,
+                    Err(message) => return view.notice(message, window, cx),
+                };
+                let setup = EditorSetup {
+                    existing: Some(existing),
+                    draft,
+                    calendars,
+                    calendar,
+                    colors: event_colors(&read.palettes),
+                    tz,
+                    use_24h,
+                    today,
+                };
+                view.editing = Some(event);
+                view.open_editor(setup, window, cx);
+            },
+        );
     }
 
     fn open_editor(&mut self, setup: EditorSetup, window: &mut Window, cx: &mut Context<Self>) {
@@ -600,7 +628,12 @@ impl MainView {
         cx.notify();
     }
 
-    fn on_editor_event(&mut self, event: &EditorEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_editor_event(
+        &mut self,
+        event: &EditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match event {
             EditorEvent::Save(request) => {
                 let event_id = match &request.op {
@@ -646,7 +679,11 @@ impl MainView {
             op,
             notify_guests,
         };
-        if self.commands.try_send(Command::Write(request)).is_err() {
+        if self
+            .commands
+            .try_send(Command::Write(Box::new(request)))
+            .is_err()
+        {
             tracing::error!("sync is not running; the change was not sent");
         }
     }
@@ -749,7 +786,7 @@ impl MainView {
         });
         cx.spawn_in(window, async move |_, cx| {
             let raw = read.await;
-            let _ = editor.update(cx, |editor, cx| match raw {
+            editor.update(cx, |editor, cx| match raw {
                 Ok(Some(raw)) => editor.rebase(raw, cx),
                 _ => editor.write_failed(WriteError::Conflict.to_string(), cx),
             });
@@ -768,50 +805,58 @@ impl MainView {
         if !self.is_writable(&event.account_id, &event.calendar_id, cx) {
             return self.notice("This calendar is read-only.", window, cx);
         }
-        self.read_then(Some(&event.clone()), window, cx, move |view, read, window, cx| {
-            let existing = match prepare(read.raw, &event) {
-                Ok(existing) => existing,
-                Err(message) => return view.notice(message, window, cx),
-            };
-            let occurrence =
-                existing.instance.is_some() || existing.original["recurringEventId"].is_string();
-            let description = if occurrence {
-                "Only this occurrence of the repeating event is deleted."
-            } else {
-                "The event is deleted from Google Calendar."
-            };
-            let closes_editor = view.editing.as_ref() == Some(&event);
-            let op = WriteOp::Delete {
-                event_id: existing.event_id.clone(),
-                instance: existing.instance.clone(),
-            };
-            let this = cx.entity().downgrade();
-            let (account_id, calendar_id) = (event.account_id.clone(), event.calendar_id.clone());
-            let chosen = Rc::new(move |notify: bool, _: &mut Window, cx: &mut App| {
-                let _ = this.update(cx, |view, _| {
-                    view.send_write(
-                        account_id.clone(),
-                        calendar_id.clone(),
-                        op.clone(),
-                        notify,
-                        Pending::Quick {
-                            failed: "The event was not deleted",
-                            closes_editor,
-                        },
-                    )
+        self.read_then(
+            Some(&event.clone()),
+            window,
+            cx,
+            move |view, read, window, cx| {
+                let existing = match prepare(read.raw, &event) {
+                    Ok(existing) => existing,
+                    Err(message) => return view.notice(message, window, cx),
+                };
+                let occurrence = existing.instance.is_some()
+                    || existing.original["recurringEventId"].is_string();
+                let description = if occurrence {
+                    "Only this occurrence of the repeating event is deleted."
+                } else {
+                    "The event is deleted from Google Calendar."
+                };
+                let closes_editor = view.editing.as_ref() == Some(&event);
+                let op = WriteOp::Delete {
+                    event_id: existing.event_id.clone(),
+                    instance: existing.instance.clone(),
+                };
+                let this = cx.entity().downgrade();
+                let (account_id, calendar_id) =
+                    (event.account_id.clone(), event.calendar_id.clone());
+                let chosen = Rc::new(move |notify: bool, _: &mut Window, cx: &mut App| {
+                    let _ = this.update(cx, |view, _| {
+                        view.send_write(
+                            account_id.clone(),
+                            calendar_id.clone(),
+                            op.clone(),
+                            notify,
+                            Pending::Quick {
+                                failed: "The event was not deleted",
+                                closes_editor,
+                            },
+                        )
+                    });
                 });
-            });
-            confirm(
-                format!("Delete \"{}\"?", event.title),
-                description,
-                "Delete",
-                has_guests_to_notify(&existing.original),
-                chosen,
-                Rc::new(|_, _| {}),
-                window,
-                cx,
-            );
-        });
+                confirm(
+                    Question {
+                        title: format!("Delete \"{}\"?", event.title),
+                        description,
+                        verb: "Delete",
+                        guests: has_guests_to_notify(&existing.original),
+                    },
+                    chosen,
+                    Rc::new(|_, _| {}),
+                    window,
+                    cx,
+                );
+            },
+        );
     }
 
     /// Sets the signed-in account's reply to an invitation.
@@ -822,44 +867,49 @@ impl MainView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.read_then(Some(&event.clone()), window, cx, move |view, read, window, cx| {
-            let tz = view.model.read(cx).tz;
-            let prepared = prepare(read.raw, &event).and_then(|existing| {
-                let mut draft = EventDraft::from_raw(&existing.original, tz)
-                    .ok_or("This event has no time takt can read.")?;
-                let me = draft
-                    .guests
-                    .iter_mut()
-                    .find(|guest| guest.is_self)
-                    .ok_or("You are not a guest of this event.")?;
-                me.response = response.to_owned();
-                Ok((existing, draft))
-            });
-            let (existing, draft) = match prepared {
-                Ok(prepared) => prepared,
-                Err(message) => return view.notice(message, window, cx),
-            };
-            let patch = draft.patch(&existing.original, tz, "");
-            if patch.as_object().is_none_or(|fields| fields.is_empty()) {
-                return;
-            }
-            view.send_write(
-                event.account_id.clone(),
-                event.calendar_id.clone(),
-                WriteOp::Update {
-                    event_id: existing.event_id,
-                    etag: existing.etag,
-                    base: base_of(&existing.original, &patch),
-                    patch,
-                    move_to: None,
-                },
-                false,
-                Pending::Quick {
-                    failed: "Your reply was not saved",
-                    closes_editor: false,
-                },
-            );
-        });
+        self.read_then(
+            Some(&event.clone()),
+            window,
+            cx,
+            move |view, read, window, cx| {
+                let tz = view.model.read(cx).tz;
+                let prepared = prepare(read.raw, &event).and_then(|existing| {
+                    let mut draft = EventDraft::from_raw(&existing.original, tz)
+                        .ok_or("This event has no time takt can read.")?;
+                    let me = draft
+                        .guests
+                        .iter_mut()
+                        .find(|guest| guest.is_self)
+                        .ok_or("You are not a guest of this event.")?;
+                    me.response = response.to_owned();
+                    Ok((existing, draft))
+                });
+                let (existing, draft) = match prepared {
+                    Ok(prepared) => prepared,
+                    Err(message) => return view.notice(message, window, cx),
+                };
+                let patch = draft.patch(&existing.original, tz, "");
+                if patch.as_object().is_none_or(|fields| fields.is_empty()) {
+                    return;
+                }
+                view.send_write(
+                    event.account_id.clone(),
+                    event.calendar_id.clone(),
+                    WriteOp::Update {
+                        event_id: existing.event_id,
+                        etag: existing.etag,
+                        base: base_of(&existing.original, &patch),
+                        patch,
+                        move_to: None,
+                    },
+                    false,
+                    Pending::Quick {
+                        failed: "Your reply was not saved",
+                        closes_editor: false,
+                    },
+                );
+            },
+        );
     }
 
     /// Sends a dragged event to its new time. With guests to tell, asks first.
@@ -870,74 +920,83 @@ impl MainView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.read_then(Some(&event.clone()), window, cx, move |view, read, window, cx| {
-            let tz = view.model.read(cx).tz;
-            let prepared = prepare(read.raw, &event).and_then(|existing| {
-                let mut draft = EventDraft::from_raw(&existing.original, tz)
-                    .ok_or("This event has no time takt can read.")?;
-                draft.time = moved.apply(draft.time, tz);
-                Ok((existing, draft))
-            });
-            let (existing, draft) = match prepared {
-                Ok(prepared) => prepared,
-                Err(message) => {
-                    view.drag = None;
-                    return view.notice(message, window, cx);
-                }
-            };
-            let patch = draft.patch(&existing.original, tz, "");
-            if patch.as_object().is_none_or(|fields| fields.is_empty()) {
-                view.drag = None;
-                cx.notify();
-                return;
-            }
-            let guests = has_guests_to_notify(&existing.original);
-            let op = WriteOp::Update {
-                event_id: existing.event_id,
-                etag: existing.etag,
-                base: base_of(&existing.original, &patch),
-                patch,
-                move_to: None,
-            };
-            let this = cx.entity().downgrade();
-            let (account_id, calendar_id) = (event.account_id.clone(), event.calendar_id.clone());
-            let chosen: Rc<dyn Fn(bool, &mut Window, &mut App)> = {
-                let this = this.clone();
-                Rc::new(move |notify, _, cx| {
-                    let _ = this.update(cx, |view, _| {
-                        view.send_write(
-                            account_id.clone(),
-                            calendar_id.clone(),
-                            op.clone(),
-                            notify,
-                            Pending::Quick {
-                                failed: "The event was not moved",
-                                closes_editor: false,
-                            },
-                        )
-                    });
-                })
-            };
-            if !guests {
-                return chosen(false, window, cx);
-            }
-            let cancelled = Rc::new(move |_: &mut Window, cx: &mut App| {
-                let _ = this.update(cx, |view, cx| {
+        self.read_then(
+            Some(&event.clone()),
+            window,
+            cx,
+            move |view, read, window, cx| {
+                let tz = view.model.read(cx).tz;
+                let prepared = prepare(read.raw, &event).and_then(|existing| {
+                    let mut draft = EventDraft::from_raw(&existing.original, tz)
+                        .ok_or("This event has no time takt can read.")?;
+                    draft.time = moved.apply(draft.time, tz);
+                    Ok((existing, draft))
+                });
+                let (existing, draft) = match prepared {
+                    Ok(prepared) => prepared,
+                    Err(message) => {
+                        view.drag = None;
+                        return view.notice(message, window, cx);
+                    }
+                };
+                let patch = draft.patch(&existing.original, tz, "");
+                if patch.as_object().is_none_or(|fields| fields.is_empty()) {
                     view.drag = None;
                     cx.notify();
+                    return;
+                }
+                let guests = has_guests_to_notify(&existing.original);
+                let op = WriteOp::Update {
+                    event_id: existing.event_id,
+                    etag: existing.etag,
+                    base: base_of(&existing.original, &patch),
+                    patch,
+                    move_to: None,
+                };
+                let (account_id, calendar_id) =
+                    (event.account_id.clone(), event.calendar_id.clone());
+                let pending = || Pending::Quick {
+                    failed: "The event was not moved",
+                    closes_editor: false,
+                };
+                if !guests {
+                    return view.send_write(account_id, calendar_id, op, false, pending());
+                }
+                let this = cx.entity().downgrade();
+                let chosen: Chosen = {
+                    let this = this.clone();
+                    Rc::new(move |notify, _, cx| {
+                        let _ = this.update(cx, |view, _| {
+                            view.send_write(
+                                account_id.clone(),
+                                calendar_id.clone(),
+                                op.clone(),
+                                notify,
+                                pending(),
+                            )
+                        });
+                    })
+                };
+                let cancelled = Rc::new(move |_: &mut Window, cx: &mut App| {
+                    let _ = this.update(cx, |view, cx| {
+                        view.drag = None;
+                        cx.notify();
+                    });
                 });
-            });
-            confirm(
-                format!("Move \"{}\"?", event.title),
-                "Guests see the new time either way.",
-                "Move",
-                true,
-                chosen,
-                cancelled,
-                window,
-                cx,
-            );
-        });
+                confirm(
+                    Question {
+                        title: format!("Move \"{}\"?", event.title),
+                        description: "Guests see the new time either way.",
+                        verb: "Move",
+                        guests: true,
+                    },
+                    chosen,
+                    cancelled,
+                    window,
+                    cx,
+                );
+            },
+        );
     }
 
     // ---- Dragging ----
@@ -962,7 +1021,12 @@ impl MainView {
         let bounds = self.day_area.get()?;
         let snapshot = &self.model.read(cx).snapshot;
         let rows: Vec<Vec<NaiveDate>> = if snapshot.view == ViewKind::Month {
-            snapshot.month.weeks.iter().map(|w| w.days.clone()).collect()
+            snapshot
+                .month
+                .weeks
+                .iter()
+                .map(|w| w.days.clone())
+                .collect()
         } else {
             vec![snapshot.grid.days.iter().map(|d| d.date).collect()]
         };
@@ -1101,7 +1165,12 @@ impl MainView {
 
     /// The pointer moved. `pressed` is false when the button was let go
     /// somewhere the release did not reach takt.
-    pub(super) fn drag_to(&mut self, position: Point<Pixels>, pressed: bool, cx: &mut Context<Self>) {
+    pub(super) fn drag_to(
+        &mut self,
+        position: Point<Pixels>,
+        pressed: bool,
+        cx: &mut Context<Self>,
+    ) {
         let Some(drag) = &self.drag else {
             return;
         };
@@ -1227,7 +1296,9 @@ mod tests {
     }
 
     fn event(event_id: &str, instance_id: &str) -> EventRef {
-        let start = chrono::Utc.with_ymd_and_hms(2026, 10, 27, 12, 0, 0).unwrap();
+        let start = chrono::Utc
+            .with_ymd_and_hms(2026, 10, 27, 12, 0, 0)
+            .unwrap();
         EventRef {
             account_id: "acc".into(),
             calendar_id: "cal".into(),
@@ -1269,7 +1340,10 @@ mod tests {
         let existing = prepare(Some(series.clone()), &occurrence).unwrap();
         assert_eq!(existing.event_id, "m_20261027T120000Z");
         assert_eq!(existing.etag, None);
-        assert_eq!(existing.original["start"]["dateTime"], "2026-10-27T12:00:00Z");
+        assert_eq!(
+            existing.original["start"]["dateTime"],
+            "2026-10-27T12:00:00Z"
+        );
         assert!(existing.original.get("recurrence").is_none());
         let instance = existing.instance.unwrap();
         assert_eq!(instance.series_id, "m");

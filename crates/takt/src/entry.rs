@@ -123,19 +123,14 @@ pub fn parse_time(text: &str) -> Option<NaiveTime> {
         "midnight" => return NaiveTime::from_hms_opt(0, 0, 0),
         _ => {}
     }
-    let (digits, half) = if let Some(rest) = text
-        .strip_suffix("am")
-        .or_else(|| text.strip_suffix('a'))
-    {
-        (rest.trim_end(), Some(false))
-    } else if let Some(rest) = text
-        .strip_suffix("pm")
-        .or_else(|| text.strip_suffix('p'))
-    {
-        (rest.trim_end(), Some(true))
-    } else {
-        (text.as_str(), None)
-    };
+    let (digits, half) =
+        if let Some(rest) = text.strip_suffix("am").or_else(|| text.strip_suffix('a')) {
+            (rest.trim_end(), Some(false))
+        } else if let Some(rest) = text.strip_suffix("pm").or_else(|| text.strip_suffix('p')) {
+            (rest.trim_end(), Some(true))
+        } else {
+            (text.as_str(), None)
+        };
     let (hour, minute) = match digits.split_once([':', '.']) {
         Some((h, m)) => (h.parse::<u32>().ok()?, m.parse::<u32>().ok()?),
         None if digits.len() >= 3 && digits.len() <= 4 => {
@@ -207,7 +202,7 @@ pub fn split_minutes(minutes: u32) -> (u32, Unit) {
     Unit::ALL
         .into_iter()
         .rev()
-        .find(|unit| minutes > 0 && minutes % unit.minutes() == 0)
+        .find(|unit| minutes > 0 && minutes.is_multiple_of(unit.minutes()))
         .map_or((minutes, Unit::Minutes), |unit| {
             (minutes / unit.minutes(), unit)
         })
@@ -284,7 +279,16 @@ mod tests {
 
     #[test]
     fn nonsense_dates_are_refused() {
-        for text in ["", "soon", "32 Oct", "30 Feb 2026", "Oct", "20", "+x", "20 Oct 2026 extra"] {
+        for text in [
+            "",
+            "soon",
+            "32 Oct",
+            "30 Feb 2026",
+            "Oct",
+            "20",
+            "+x",
+            "20 Oct 2026 extra",
+        ] {
             assert_eq!(parse_date(text, today()), None, "{text}");
         }
     }

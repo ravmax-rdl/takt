@@ -17,7 +17,7 @@ pub enum Command {
         visible: bool,
     },
     /// Sends one change to Google. Answered with [`SyncEvent::WriteDone`].
-    Write(WriteRequest),
+    Write(Box<WriteRequest>),
     WindowFocus(bool),
     Shutdown,
 }

@@ -116,7 +116,7 @@ async fn create_chooses_an_id_and_stores_what_google_returns() {
         .await
         .unwrap();
     assert_eq!(outcome.calendar_id, "cal");
-    assert_eq!(ids(&f.store), [outcome.event_id.clone()]);
+    assert_eq!(ids(&f.store), [outcome.event_id]);
     assert_eq!(changed(&f), 1);
 }
 

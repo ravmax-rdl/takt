@@ -523,11 +523,7 @@ impl EventDraft {
             return Value::Object(patch);
         };
         let optional_text = |s: &str| {
-            if s.is_empty() {
-                Value::Null
-            } else {
-                s.into()
-            }
+            if s.is_empty() { Value::Null } else { s.into() }
         };
         if self.summary != before.summary {
             patch.insert("summary".into(), self.summary.clone().into());
@@ -673,7 +669,12 @@ pub fn base_of(original: &Value, patch: &Value) -> Value {
         .as_object()
         .into_iter()
         .flatten()
-        .map(|(key, _)| (key.clone(), original.get(key).cloned().unwrap_or(Value::Null)))
+        .map(|(key, _)| {
+            (
+                key.clone(),
+                original.get(key).cloned().unwrap_or(Value::Null),
+            )
+        })
         .collect();
     Value::Object(fields)
 }
@@ -845,8 +846,10 @@ mod tests {
     #[test]
     fn a_move_sends_start_and_end_in_the_events_own_zone() {
         let mut raw = lunch();
-        raw["start"] = json!({"dateTime": "2026-10-20T07:00:00-04:00", "timeZone": "America/New_York"});
-        raw["end"] = json!({"dateTime": "2026-10-20T08:00:00-04:00", "timeZone": "America/New_York"});
+        raw["start"] =
+            json!({"dateTime": "2026-10-20T07:00:00-04:00", "timeZone": "America/New_York"});
+        raw["end"] =
+            json!({"dateTime": "2026-10-20T08:00:00-04:00", "timeZone": "America/New_York"});
         let mut draft = draft(&raw);
         assert_eq!(
             draft.time,
@@ -872,8 +875,10 @@ mod tests {
     fn an_end_in_another_zone_keeps_that_zone() {
         // A flight: leaves London 10:00, lands New York 13:00 local.
         let mut raw = lunch();
-        raw["start"] = json!({"dateTime": "2026-10-20T10:00:00+01:00", "timeZone": "Europe/London"});
-        raw["end"] = json!({"dateTime": "2026-10-20T13:00:00-04:00", "timeZone": "America/New_York"});
+        raw["start"] =
+            json!({"dateTime": "2026-10-20T10:00:00+01:00", "timeZone": "Europe/London"});
+        raw["end"] =
+            json!({"dateTime": "2026-10-20T13:00:00-04:00", "timeZone": "America/New_York"});
         let mut draft = draft(&raw);
         let DraftTime::Timed { start, end, zone } = draft.time else {
             panic!("timed")
@@ -1252,7 +1257,15 @@ mod tests {
         for good in ["a@b.co", " sam@example.com "] {
             assert!(looks_like_email(good), "{good}");
         }
-        for bad in ["", "sam", "sam@", "@example.com", "sam@example", "a b@c.de", "a@.com"] {
+        for bad in [
+            "",
+            "sam",
+            "sam@",
+            "@example.com",
+            "sam@example",
+            "a b@c.de",
+            "a@.com",
+        ] {
             assert!(!looks_like_email(bad), "{bad}");
         }
     }

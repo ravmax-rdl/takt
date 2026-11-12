@@ -425,7 +425,7 @@ async fn offline_account_recovers_on_sync_now_and_keeps_its_rows() {
 }
 
 fn create(id: u64, account: &str) -> Command {
-    Command::Write(WriteRequest {
+    Command::Write(Box::new(WriteRequest {
         id,
         account_id: account.into(),
         calendar_id: "cal".into(),
@@ -433,7 +433,7 @@ fn create(id: u64, account: &str) -> Command {
             body: json!({"id": "new01", "summary": "Lunch"}),
         },
         notify_guests: false,
-    })
+    }))
 }
 
 #[tokio::test]
